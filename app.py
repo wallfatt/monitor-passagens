@@ -7,7 +7,7 @@ from datetime import datetime
 st.set_page_config(page_title="Radar Azul - Ida e Volta", layout="wide")
 st.title("✈️ Radar de Passagens - Ida e Volta")
 
-caminho_csv = "https://drive.google.com/uc?export=download&id=1VFLoXan_R9NgwPrk_Qw5VZg1wrdtMraI"
+caminho_csv = "https://drive.google.com/file/d/1kW2FY4lAxRcp2ZSmBVfeuUWgqGZprLE4"
 
 st.sidebar.header("⚙️ Estado do Ficheiro")
 st.sidebar.info("🌐 A ler dados da nuvem...")
