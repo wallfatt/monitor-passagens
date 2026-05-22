@@ -1,258 +1,149 @@
-import streamlit as st
+import streamlit as dt
 import pandas as pd
-import calendar
-from datetime import datetime
+import requests
+from io import StringIO
 
-# 1. Configuração da página
-st.set_page_config(page_title="Radar Azul - Ida e Volta", layout="wide")
-st.title("✈️ Radar de Passagens - Ida e Volta")
+# Configuração da página do Streamlit
+dt.set_page_config(page_title="Radar de Voos - Azul Pontos", layout="wide", page_icon="✈️")
 
-caminho_csv = "https://drive.google.com/file/d/1kW2FY4lAxRcp2ZSmBVfeuUWgqGZprLE4"
+# LINK DO SEU GOOGLE DRIVE (Convertido automaticamente para formato de exportação de dados)
+ID_PLANILHA = "1kW2FY4lAxRcp2ZSmBVfeuUWgqGZprLE4"
+URL_DRIVE_CSV = f"https://docs.google.com/spreadsheets/d/{ID_PLANILHA}/export?format=csv"
 
-st.sidebar.header("⚙️ Estado do Ficheiro")
-st.sidebar.info("🌐 A ler dados da nuvem...")
-
-# --- BANCO DE DADOS DE TAXAS ---
-TAXAS_EMBARQUE = {
-    "NAT": 48.26,
-    "UDI": 40.96
-}
-
-# --- CSS DO CALENDÁRIO ---
-st.markdown("""
-<style>
-    .cal-container { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; margin-bottom: 20px; }
-    .cal-header { text-align: center; font-weight: bold; padding: 2px; color: #555; font-size: 0.85em; }
-    .cal-day { padding: 5px 2px; border-radius: 4px; text-align: center; border: 1px solid #e0e0e0; display: flex; flex-direction: column; justify-content: center; min-height: 55px; cursor: help;}
-    .cal-day:hover { transform: scale(1.05); transition: 0.2s; box-shadow: 0 4px 8px rgba(0,0,0,0.1); }
-    .cal-date { font-weight: bold; font-size: 0.9em; margin-bottom: 2px; color: #333;}
-    .cal-price { font-size: 0.75em; font-weight: 700; line-height: 1.1;}
-    .best-price { background-color: #28a745; color: white; border-color: #28a745; box-shadow: 0 2px 4px rgba(40,167,69,0.3);}
-    .cheap { background-color: #d4edda; color: #155724; border-color: #c3e6cb; }
-    .medium { background-color: #fff3cd; color: #856404; border-color: #ffeeba; }
-    .expensive { background-color: #f8d7da; color: #721c24; border-color: #f5c6cb; }
-    .empty { background-color: #f8f9fa; color: #adb5bd; cursor: default; }
-    .empty:hover { transform: none; box-shadow: none; }
-    .blank { background: transparent; border: none; }
-</style>
-""", unsafe_allow_html=True)
-
-# --- FUNÇÕES DE LÓGICA E FORMATAÇÃO ---
-def limpar_preco(preco_val):
-    if pd.isna(preco_val): return None
-    preco_str = str(preco_val).strip()
-    if "Ind" in preco_str or "Não" in preco_str: return None
-    try:
-        return int(float(preco_str.replace(',', '.')) * 1000)
-    except:
-        return None
-
-def formatar_valor_final(valor, modo):
-    if pd.isna(valor): return "Esgotado"
-    if modo == "Pontos":
-        return f"{int(valor):,} Pts".replace(",", ".")
-    else:
-        return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-
-def criar_dicionario_tooltips(df_rota, modo):
-    voos_dict = {}
-    if df_rota.empty: return voos_dict
-    
-    for data, grupo in df_rota.groupby('Data Formatada'):
-        grupo_ordenado = grupo.sort_values('Valor_Referencia', na_position='last')
-        linhas = [f"Voos em {data.strftime('%d/%m/%Y')}:"]
-        
-        for _, row in grupo_ordenado.iterrows():
-            preco_str = formatar_valor_final(row['Valor_Referencia'], modo)
-            linhas.append(f"• {row['Partida']} ➔ {row['Chegada']} | {preco_str}")
-            
-        voos_dict[data] = "&#10;".join(linhas)
-    return voos_dict
-
-def formatar_tabela_exibicao(df_filtrado, col_preco, modo):
-    df_exibicao = df_filtrado.drop(columns=['Data Formatada', 'Preco_Num']).copy()
-    
-    if modo == "Reais":
-        df_exibicao["Custo Total (R$)"] = df_exibicao["Valor_Referencia"].apply(
-            lambda x: formatar_valor_final(x, modo) if pd.notna(x) else "Esgotado"
-        )
-    else:
-        df_exibicao["Pontos (Mil)"] = df_exibicao["Valor_Referencia"].apply(
-            lambda x: formatar_valor_final(x, modo) if pd.notna(x) else "Esgotado"
-        )
-        
-    if col_preco in df_exibicao.columns:
-        df_exibicao = df_exibicao.drop(columns=[col_preco])
-    if "Valor_Referencia" in df_exibicao.columns:
-        df_exibicao = df_exibicao.drop(columns=["Valor_Referencia"])
-        
-    return df_exibicao
-
-@st.cache_data(ttl=30)
+@dt.cache_data(ttl=300)  # Atualiza o cache do painel a cada 5 minutos
 def carregar_dados():
     try:
-        df = pd.read_csv(caminho_csv, sep=',', encoding='utf-8', on_bad_lines='skip')
-        df.columns = df.columns.str.strip()
-        return df
-    except Exception as e:
-        st.error(f"Erro ao ler o CSV da nuvem: {e}")
-        return None
-
-def gerar_html_calendario(ano, mes, precos_diarios, min_abs, lim_barato, lim_medio, tooltips_dict, modo):
-    cal = calendar.monthcalendar(ano, mes)
-    html_cal = '<div class="cal-container">'
-    
-    for d in ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom']:
-        html_cal += f'<div class="cal-header">{d}</div>'
-        
-    for semana in cal:
-        for dia in semana:
-            if dia == 0:
-                html_cal += '<div class="blank"></div>'
-            else:
-                data_atual = pd.Timestamp(year=ano, month=mes, day=dia)
-                tooltip_texto = tooltips_dict.get(data_atual, "Sem voos registados")
-                
-                if precos_diarios is not None and data_atual in precos_diarios.index and pd.notna(precos_diarios[data_atual]):
-                    preco = precos_diarios[data_atual]
-                    preco_exibicao = formatar_valor_final(preco, modo)
-                    
-                    if preco == min_abs: css_class = "best-price"
-                    elif preco <= lim_barato: css_class = "cheap"
-                    elif preco <= lim_medio: css_class = "medium"
-                    else: css_class = "expensive"
-                        
-                    html_cal += f'<div class="cal-day {css_class}" title="{tooltip_texto}"><div class="cal-date">{dia}</div><div class="cal-price">{preco_exibicao}</div></div>'
-                else:
-                    html_cal += f'<div class="cal-day empty" title="Sem opções para este dia"><div class="cal-date">{dia}</div><div class="cal-price">-</div></div>'
-    html_cal += '</div>'
-    return html_cal
-
-# --- EXECUÇÃO PRINCIPAL ---
-df_bruto = carregar_dados()
-
-if df_bruto is not None:
-    col_data = "Data Voo" if "Data Voo" in df_bruto.columns else None
-    col_preco = [c for c in df_bruto.columns if "Pre" in c]
-    col_preco = col_preco[0] if len(col_preco) > 0 else None
-    
-    if col_data and col_preco and "Origem" in df_bruto.columns and "Destino" in df_bruto.columns:
-        
-        df_processado = df_bruto.copy()
-        df_processado['Data Formatada'] = pd.to_datetime(df_processado[col_data], format='%d/%m/%Y', errors='coerce')
-        df_processado['Preco_Num'] = df_processado[col_preco].apply(limpar_preco)
-        
-        st.sidebar.markdown("---")
-        st.sidebar.header("🔎 Selecione a Ida")
-        origens = sorted(df_processado["Origem"].dropna().unique())
-        origem_sel = st.sidebar.selectbox("Origem (Ida):", origens)
-        
-        destinos = sorted(df_processado[df_processado["Origem"] == origem_sel]["Destino"].dropna().unique())
-        destino_sel = st.sidebar.selectbox("Destino (Ida):", destinos)
-        
-        st.sidebar.markdown("---")
-        st.sidebar.header("💰 Moeda de Exibição")
-        modo_exibicao = st.sidebar.radio("Mostrar custos em:", ["Pontos", "Reais"])
-        
-        valor_milheiro = 0.0
-        if modo_exibicao == "Reais":
-            # VALOR ATUALIZADO PARA 17.00 COMO PADRÃO INICIAL
-            valor_milheiro = st.sidebar.number_input("Valor de 1.000 pontos (R$):", min_value=0.01, value=17.00, step=0.50, format="%.2f")
-            st.sidebar.caption("*Inclui a taxa de embarque do aeroporto e a taxa de emissão da Azul (R$ 49,90) para voos com menos de 90 dias.*")
-        
-        # CÁLCULO DE TAXAS E VALOR FINAL
-        hoje = pd.Timestamp.now().normalize()
-        
-        def calcular_valor_referencia(row):
-            if pd.isna(row['Preco_Num']):
-                return None
+        # Faz a requisição dos dados diretamente do Google Drive
+        response = requests.get(URL_DRIVE_CSV)
+        if response.status_code == 200:
+            # Transforma o texto recebido em um DataFrame do Pandas
+            dados_csv = StringIO(response.text)
+            df = pd.read_csv(dados_csv, encoding='utf-8')
             
-            if modo_exibicao == "Pontos":
-                return row['Preco_Num']
+            # Converte os preços para numérico (remove qualquer caractere residual)
+            df['Preco normal'] = pd.to_numeric(df['Preco normal'], errors='coerce')
+            df['Preco clube'] = pd.to_numeric(df['Preco clube'], errors='coerce')
             
-            custo_pontos = (row['Preco_Num'] / 1000) * valor_milheiro
-            taxa_emb = TAXAS_EMBARQUE.get(row['Origem'], 0.0)
-            
-            dias_para_voo = (row['Data Formatada'] - hoje).days
-            taxa_emi = 49.90 if 0 <= dias_para_voo <= 90 else 0.0
-            
-            return custo_pontos + taxa_emb + taxa_emi
-            
-        df_processado['Valor_Referencia'] = df_processado.apply(calcular_valor_referencia, axis=1)
-        
-        df_ida = df_processado[(df_processado["Origem"] == origem_sel) & (df_processado["Destino"] == destino_sel)].copy()
-        df_volta = df_processado[(df_processado["Origem"] == destino_sel) & (df_processado["Destino"] == origem_sel)].copy()
-        
-        if not df_ida.empty or not df_volta.empty:
-            
-            tooltips_ida = criar_dicionario_tooltips(df_ida, modo_exibicao)
-            tooltips_volta = criar_dicionario_tooltips(df_volta, modo_exibicao)
-            
-            col_ida, col_volta = st.columns(2)
-            
-            with col_ida: st.subheader(f"🛫 IDA: {origem_sel} ➔ {destino_sel}")
-            with col_volta: st.subheader(f"🛬 VOLTA: {destino_sel} ➔ {origem_sel}")
-            
-            if not df_ida.empty:
-                precos_ida = df_ida.groupby('Data Formatada')['Valor_Referencia'].min()
-                min_ida = precos_ida.min()
-                dif_ida = precos_ida.max() - min_ida
-                barato_ida = min_ida + (dif_ida * 0.25)
-                medio_ida = min_ida + (dif_ida * 0.60)
-            else:
-                precos_ida = None; min_ida = barato_ida = medio_ida = 0
-                
-            if not df_volta.empty:
-                precos_volta = df_volta.groupby('Data Formatada')['Valor_Referencia'].min()
-                min_volta = precos_volta.min()
-                dif_volta = precos_volta.max() - min_volta
-                barato_volta = min_volta + (dif_volta * 0.25)
-                medio_volta = min_volta + (dif_volta * 0.60)
-            else:
-                precos_volta = None; min_volta = barato_volta = medio_volta = 0
-
-            meses_ida = df_ida['Data Formatada'].dropna().dt.to_period('M').unique() if not df_ida.empty else []
-            meses_volta = df_volta['Data Formatada'].dropna().dt.to_period('M').unique() if not df_volta.empty else []
-            todos_meses = sorted(list(set(meses_ida).union(set(meses_volta))))
-            meses_pt = {1: 'Janeiro', 2: 'Fevereiro', 3: 'Março', 4: 'Abril', 5: 'Maio', 6: 'Junho', 7: 'Julho', 8: 'Agosto', 9: 'Setembro', 10: 'Outubro', 11: 'Novembro', 12: 'Dezembro'}
-            
-            for mes_ano in todos_meses:
-                ano = mes_ano.year; mes = mes_ano.month
-                
-                with col_ida:
-                    st.markdown(f"#### {meses_pt[mes]} {ano}")
-                    html_ida = gerar_html_calendario(ano, mes, precos_ida, min_ida, barato_ida, medio_ida, tooltips_ida, modo_exibicao)
-                    st.markdown(html_ida, unsafe_allow_html=True)
-                    
-                with col_volta:
-                    st.markdown(f"#### {meses_pt[mes]} {ano}")
-                    html_volta = gerar_html_calendario(ano, mes, precos_volta, min_volta, barato_volta, medio_volta, tooltips_volta, modo_exibicao)
-                    st.markdown(html_volta, unsafe_allow_html=True)
-                
-                st.markdown("<hr style='margin: 10px 0; opacity: 0.2;'>", unsafe_allow_html=True)
-                
-            st.markdown("---")
-            st.subheader("🔍 Inspeção Diária de Horários")
-            
-            col_detalhe_ida, col_detalhe_volta = st.columns(2)
-            
-            with col_detalhe_ida:
-                datas_ida_lista = [d.strftime('%d/%m/%Y') for d in sorted(df_ida['Data Formatada'].dropna().unique())] if not df_ida.empty else []
-                if datas_ida_lista:
-                    dia_ida = st.selectbox("Detalhar dia de Ida:", ["Selecione..."] + datas_ida_lista)
-                    if dia_ida != "Selecione...":
-                        df_filtro = df_ida[df_ida['Data Formatada'] == pd.to_datetime(dia_ida, format='%d/%m/%Y')].sort_values('Valor_Referencia', na_position='last')
-                        st.dataframe(formatar_tabela_exibicao(df_filtro, col_preco, modo_exibicao), hide_index=True)
-                        
-            with col_detalhe_volta:
-                datas_volta_lista = [d.strftime('%d/%m/%Y') for d in sorted(df_volta['Data Formatada'].dropna().unique())] if not df_volta.empty else []
-                if datas_volta_lista:
-                    dia_volta = st.selectbox("Detalhar dia de Volta:", ["Selecione..."] + datas_volta_lista)
-                    if dia_volta != "Selecione...":
-                        df_filtro = df_volta[df_volta['Data Formatada'] == pd.to_datetime(dia_volta, format='%d/%m/%Y')].sort_values('Valor_Referencia', na_position='last')
-                        st.dataframe(formatar_tabela_exibicao(df_filtro, col_preco, modo_exibicao), hide_index=True)
-
+            # Ajusta o formato das datas de partida para ordenação correta
+            df['Data partida_dt'] = pd.to_datetime(df['Data partida'], format='%d/%m/%Y', errors='coerce')
+            return df
         else:
-            st.info("Nenhuma data encontrada para esta rota.")
+            return pd.DataFrame()
+    except Exception as e:
+        print(f"Erro ao carregar dados do Drive: {e}")
+        return pd.DataFrame()
+
+# Título do Dashboard
+dt.title("✈️ Dashboard - Monitoramento de Voos Azul Pontos")
+dt.markdown("Consulte os melhores preços em milhas coletados pelo robô buscador hospedado no Google Drive.")
+
+df_voos = carregar_dados()
+
+if df_voos.empty:
+    dt.warning("⚠️ Não foi possível ler os dados da planilha do Google Drive. Verifique se o arquivo está configurado como 'Qualquer pessoa com o link pode ler' nas opções de compartilhamento do Drive.")
+else:
+    # --- BARRA LATERAL: FILTROS ---
+    dt.sidebar.header("🔍 Filtros de Busca")
+    
+    # Filtro de Rota unificado
+    rotas_disponiveis = (df_voos['Origem'] + " -> " + df_voos['Destino']).unique()
+    rota_selecionada = dt.sidebar.selectbox("Escolha a Rota:", sorted(rotas_disponiveis))
+    
+    origem_sel, destino_sel = rota_selecionada.split(" -> ")
+    
+    # Filtrando datas com base na rota
+    df_filtrado_rota = df_voos[(df_voos['Origem'] == origem_sel) & (df_voos['Destino'] == destino_sel)]
+    
+    # Filtro de Data de Partida
+    datas_disponiveis = sorted(df_filtrado_rota['Data partida_dt'].dropna().unique())
+    datas_formatadas = [pd.to_datetime(d).strftime('%d/%m/%Y') for d in datas_disponiveis]
+    
+    if not datas_formatadas:
+        dt.info("Não há datas disponíveis para esta rota.")
     else:
-        st.error("Colunas essenciais não encontradas. O site não conseguiu ler o Excel.")
+        data_selecionada_str = dt.sidebar.selectbox("Data de Partida:", datas_formatadas)
+        
+        # Filtro de Tipo de Voo (Direto ou Conexões)
+        conexoes_max = int(df_filtrado_rota['Numero voos'].max()) if not df_filtrado_rota.empty else 1
+        opcoes_voo = ["Todos", "Apenas Direto"]
+        if conexoes_max > 1:
+            opcoes_voo.append("Com Conexão")
+        tipo_voo = dt.sidebar.radio("Tipo de Voo:", opcoes_voo)
+
+        # Aplicação final dos filtros no DataFrame
+        df_final = df_filtrado_rota[df_filtrado_rota['Data partida'] == data_selecionada_str]
+        
+        if tipo_voo == "Apenas Direto":
+            df_final = df_final[df_final['Numero voos'] == 1]
+        elif tipo_voo == "Com Conexão":
+            df_final = df_final[df_final['Numero voos'] > 1]
+            
+        # Ordenar por menor preço do clube
+        df_final = df_final.sort_values(by="Preco clube", ascending=True)
+
+        # --- CARD PRINCIPAL: INDICADORES ---
+        if not df_final.empty:
+            melhor_voo = df_final.iloc[0]
+            
+            col1, col2, col3, col4 = dt.columns(4)
+            
+            with col1:
+                dt.metric(
+                    label="🏆 Melhor Preço Clube", 
+                    value=f"{int(melhor_voo['Preco clube']):,} pts".replace(",", "."),
+                    delta=f"Normal: {int(melhor_voo['Preco normal']):,} pts".replace(",", ".")
+                )
+            with col2:
+                media_clube = df_final['Preco clube'].mean()
+                dt.metric(
+                    label="📊 Média do Dia (Clube)", 
+                    value=f"{int(media_clube):,} pts".replace(",", ".")
+                )
+            with col3:
+                dt.metric(
+                    label="🕒 Horário de Partida", 
+                    value=f"{melhor_voo['Hora partida']} -> {melhor_voo['Hora chegada']}"
+                )
+            with col4:
+                texto_conexao = "Direto" if melhor_voo['Numero voos'] == 1 else f"{int(melhor_voo['Numero voos'])-1} conexão(ões)"
+                dt.metric(label="✈️ Conexões (Melhor Voo)", value=texto_conexao)
+                
+            dt.markdown("---")
+            
+            # --- TABELA DE RESULTADOS ---
+            dt.subheader(f"📋 Voos Disponíveis para {rota_selecionada} em {data_selecionada_str}")
+            
+            # Formatando a tabela para exibição visual bonita
+            df_exibicao = df_final[[
+                "Hora partida", "Hora chegada", "Duracao", "Numero voos", "Preco normal", "Preco clube", "Hora pesquisa"
+            ]].copy()
+            
+            df_exibicao.columns = [
+                "Saída", "Chegada", "Duração", "Total de Voos", "Preço Normal (Pts)", "Preço Clube (Pts)", "Última Atualização"
+            ]
+            
+            dt.dataframe(
+                df_exibicao.style.format({
+                    "Preço Normal (Pts)": "{:,.0f}".format,
+                    "Preço Clube (Pts)": "{:,.0f}".format
+                }).highlight_min(subset=["Preço Clube (Pts)"], color="#bbf7d0"),
+                use_container_width=True
+            )
+            
+            # Histórico de Coletas
+            dt.markdown("---")
+            dt.subheader("📈 Histórico de Variação de Preço (Evolução das Coletas)")
+            
+            df_historico = df_filtrado_rota[
+                (df_filtrado_rota['Data partida'] == data_selecionada_str) & 
+                (df_filtrado_rota['Hora partida'] == melhor_voo['Hora partida'])
+            ].sort_values(by="Data pesquisa")
+            
+            if len(df_historico) > 1:
+                df_grafico = df_historico.set_index("Data pesquisa")[["Preco normal", "Preco clube"]]
+                dt.line_chart(df_grafico)
+            else:
+                dt.info("💡 À medida que o robô rodar mais vezes em horários diferentes, um gráfico de evolução de preços aparecerá aqui automaticamente.")
+                
+        else:
+            dt.info("❌ Nenhum voo encontrado com os filtros selecionados.")
