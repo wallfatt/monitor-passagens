@@ -12,11 +12,16 @@ dt.set_page_config(page_title="Radar de Voos - Calendários", layout="wide", pag
 ID_PLANILHA = "1kW2FY4lAxRcp2ZSmBVfeuUWgqGZprLE4"
 URL_DRIVE_CSV = f"https://docs.google.com/uc?export=download&id={ID_PLANILHA}"
 
-# TAXAS FIXAS POR AEROPORTO
+# TAXAS FIXAS POR AEROPORTO ATUALIZADAS
 TAXAS_AEROPORTO = {
-    "STM": 33.15, "NAT": 35.40, "BEL": 34.20, "VCP": 33.65, "GRU": 34.63, "BSB": 35.10
+    "STM": 36.67, 
+    "NAT": 48.26, 
+    "BEL": 54.45, 
+    "VCP": 31.94, 
+    "GRU": 33.64, 
+    "BSB": 32.87
 }
-TAXA_PADRAO = 35.00
+TAXA_PADRAO = 50.00
 
 @dt.cache_data(ttl=120)
 def carregar_dados():
@@ -63,25 +68,25 @@ def processar_custos(df_voos_filtrado, origem, valor_milheiro):
     
     return df_temp
 
-def gerar_html_calendario(df_mes, ano, mes, coluna_valor, titulo, is_pontos):
+def gerar_html_calendario(df_mes, ano, mes, coluna_valor, titulo, taxa_base, is_pontos, val_min, val_max):
     meses_pt = {1: 'Janeiro', 2: 'Fevereiro', 3: 'Março', 4: 'Abril', 5: 'Maio', 6: 'Junho',
                 7: 'Julho', 8: 'Agosto', 9: 'Setembro', 10: 'Outubro', 11: 'Novembro', 12: 'Dezembro'}
     
-    html = f"<h3 style='text-align: center; color: #1f2937;'>{titulo} - {meses_pt[mes]} {ano}</h3>"
+    html = f"<div style='text-align: center; color: #1f2937; font-size: 18px; font-weight: bold;'>{titulo}</div>"
+    html += f"<div style='text-align: center; color: #4b5563; font-size: 13px; margin-bottom: 5px;'>Taxa de Embarque local: R$ {taxa_base:.2f}</div>"
+    html += f"<div style='text-align: center; color: #1e293b; font-size: 16px; margin-bottom: 10px; font-weight: 600;'>{meses_pt[mes]} {ano}</div>"
+    
     html += "<table style='width:100%; border-collapse: separate; border-spacing: 4px; text-align:center; font-family: sans-serif;'>"
     html += "<tr style='background-color:#1e293b; color:white; font-weight:bold;'>"
     for d in ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom']:
         html += f"<td style='padding:8px; border-radius: 4px;'>{d}</td>"
     html += "</tr>"
 
-    if df_mes.empty:
-        val_min, val_max, val_range = 0, 1, 1
-        df_dia = {}
-    else:
+    df_dia = {}
+    if not df_mes.empty:
         df_dia = df_mes.groupby(df_mes['Data partida_dt'].dt.day)[coluna_valor].min().to_dict()
-        val_min = min(df_dia.values()) if df_dia else 0
-        val_max = max(df_dia.values()) if df_dia else 1
-        val_range = val_max - val_min if val_max != val_min else 1
+
+    val_range = val_max - val_min if val_max != val_min else 1
 
     cal = calendar.Calendar(firstweekday=0)
     month_days = cal.monthdayscalendar(ano, mes)
@@ -94,6 +99,7 @@ def gerar_html_calendario(df_mes, ano, mes, coluna_valor, titulo, is_pontos):
             else:
                 if day in df_dia:
                     val = df_dia[day]
+                    # O peso agora é baseado na escala global
                     peso = (val - val_min) / val_range
                     
                     if peso < 0.5:
@@ -125,7 +131,6 @@ def gerar_html_calendario(df_mes, ano, mes, coluna_valor, titulo, is_pontos):
     html += "</table>"
     return html
 
-
 # --- INÍCIO DA INTERFACE ---
 dt.title("✈️ Dashboard - Painel de Passagens")
 
@@ -134,7 +139,7 @@ df_voos = carregar_dados()
 if df_voos.empty:
     dt.warning("⚠️ Os dados ainda não foram processados ou a planilha está vazia.")
 else:
-    # --- MENU LATERAL (FILTROS) ---
+    # --- MENU LATERAL (FILTROS E AVISOS) ---
     dt.sidebar.header("🔍 Configurações de Busca")
     
     df_voos['Rota_Ida'] = df_voos['Origem'] + " -> " + df_voos['Destino']
@@ -142,17 +147,13 @@ else:
     
     rota_selecionada = dt.sidebar.selectbox("Selecione a Rota (Ida):", rotas_disponiveis)
     origem_ida, destino_ida = rota_selecionada.split(" -> ")
-    
-    # Deriva a volta automaticamente
     origem_volta, destino_volta = destino_ida, origem_ida
     
-    # Filtro de Métricas
     modo_visualizacao = dt.sidebar.selectbox(
         "Mostrar valores em:", 
         ["Pontos", "Reais (Clube)", "Reais (Normal)"]
     )
     
-    # Valor do milheiro
     valor_milheiro = dt.sidebar.number_input(
         "Valor do Milheiro da Azul (R$):", 
         value=17.00, 
@@ -160,23 +161,21 @@ else:
         format="%.2f"
     )
     
-    # Mês de Pesquisa
-    meses_disponiveis = sorted(df_voos['Mês/Ano'].dropna().unique(), key=lambda x: datetime.strptime(x, "%m/%Y"))
-    mes_selecionado = dt.sidebar.selectbox("Selecione o Mês:", meses_disponiveis)
-    mes_int, ano_int = map(int, mes_selecionado.split("/"))
+    dt.sidebar.markdown("---")
+    dt.sidebar.info("💡 **Atenção (Regra Azul):**\nVoos com menos de 90 dias da data atual pagam uma taxa extra de emissão no valor de **R$ 49,90**. Esse valor já é somado automaticamente no cálculo em Reais.")
 
     # --- PROCESSAMENTO DOS DADOS ---
-    # Processa Ida
     df_ida = df_voos[(df_voos['Origem'] == origem_ida) & (df_voos['Destino'] == destino_ida)]
     df_ida_processado = processar_custos(df_ida, origem_ida, valor_milheiro)
-    df_ida_mes = df_ida_processado[df_ida_processado['Mês/Ano'] == mes_selecionado]
     
-    # Processa Volta
     df_volta = df_voos[(df_voos['Origem'] == origem_volta) & (df_voos['Destino'] == destino_volta)]
     df_volta_processado = processar_custos(df_volta, origem_volta, valor_milheiro)
-    df_volta_mes = df_volta_processado[df_volta_processado['Mês/Ano'] == mes_selecionado]
 
-    # Define qual coluna usar baseada na seleção
+    meses_disponiveis = sorted(
+        pd.concat([df_ida_processado['Mês/Ano'], df_volta_processado['Mês/Ano']]).dropna().unique(),
+        key=lambda x: datetime.strptime(x, "%m/%Y")
+    )
+
     if modo_visualizacao == "Pontos":
         coluna_valor = 'Preco clube'
         is_pontos = True
@@ -187,25 +186,37 @@ else:
         coluna_valor = 'Custo Real Normal'
         is_pontos = False
 
-    # --- RENDERIZAÇÃO DOS CALENDÁRIOS ---
-    col1, col2 = dt.columns(2)
-    
-    with col1:
-        dt.markdown(gerar_html_calendario(
-            df_ida_mes, ano_int, mes_int, coluna_valor, 
-            f"IDA: {origem_ida} ➔ {destino_ida}", is_pontos
-        ), unsafe_allow_html=True)
-        
-    with col2:
-        dt.markdown(gerar_html_calendario(
-            df_volta_mes, ano_int, mes_int, coluna_valor, 
-            f"VOLTA: {origem_volta} ➔ {destino_volta}", is_pontos
-        ), unsafe_allow_html=True)
+    # --- CALCULA A ESCALA GLOBAL DE CORES PARA TODA A ROTA ---
+    valores_globais = pd.concat([df_ida_processado[coluna_valor], df_volta_processado[coluna_valor]]).dropna()
+    if not valores_globais.empty:
+        global_min = valores_globais.min()
+        global_max = valores_globais.max()
+    else:
+        global_min, global_max = 0, 1
 
-    dt.markdown(
-        "<div style='display: flex; gap: 20px; font-size: 14px; margin-top: 25px; justify-content: center;'>"
-        "<span>🟢 Menor Preço do Mês</span>"
-        "<span>🟡 Preço Intermediário</span>"
-        "<span>🔴 Maior Preço do Mês</span>"
-        "</div>", unsafe_allow_html=True
-    )
+    taxa_base_ida = TAXAS_AEROPORTO.get(origem_ida, TAXA_PADRAO)
+    taxa_base_volta = TAXAS_AEROPORTO.get(origem_volta, TAXA_PADRAO)
+
+    # --- RENDERIZAÇÃO DOS CALENDÁRIOS EM CASCATA ---
+    for mes_ano in meses_disponiveis:
+        mes_int, ano_int = map(int, mes_ano.split("/"))
+        
+        df_ida_mes = df_ida_processado[df_ida_processado['Mês/Ano'] == mes_ano]
+        df_volta_mes = df_volta_processado[df_volta_processado['Mês/Ano'] == mes_ano]
+
+        col1, col2 = dt.columns(2)
+        
+        with col1:
+            dt.markdown(gerar_html_calendario(
+                df_ida_mes, ano_int, mes_int, coluna_valor, 
+                f"IDA: {origem_ida} ➔ {destino_ida}", taxa_base_ida, is_pontos, global_min, global_max
+            ), unsafe_allow_html=True)
+            
+        with col2:
+            dt.markdown(gerar_html_calendario(
+                df_volta_mes, ano_int, mes_int, coluna_valor, 
+                f"VOLTA: {origem_volta} ➔ {destino_volta}", taxa_base_volta, is_pontos, global_min, global_max
+            ), unsafe_allow_html=True)
+            
+        # Linha divisória entre os meses
+        dt.markdown("<br><hr style='border:1px solid #e2e8f0;'><br>", unsafe_allow_html=True)
