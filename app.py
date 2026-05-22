@@ -7,9 +7,9 @@ from datetime import datetime
 # Configuração da página do Streamlit
 dt.set_page_config(page_title="Radar de Voos - Azul", layout="wide", page_icon="✈️")
 
-# LINK DO SEU GOOGLE DRIVE (Mapeado e pronto para leitura direta)
+# LINK DO SEU GOOGLE DRIVE (Ajustado para download direto de arquivos puros .csv)
 ID_PLANILHA = "1kW2FY4lAxRcp2ZSmBVfeuUWgqGZprLE4"
-URL_DRIVE_CSV = f"https://docs.google.com/spreadsheets/d/{ID_PLANILHA}/export?format=csv"
+URL_DRIVE_CSV = f"https://docs.google.com/uc?export=download&id={ID_PLANILHA}"
 
 # --- TABELA FIXA DE TAXAS DE EMBARQUE POR AEROPORTO ---
 TAXAS_AEROPORTO = {
@@ -28,10 +28,15 @@ VALOR_MILHEIRO = 17.50
 @dt.cache_data(ttl=300)  # Atualiza o cache do painel a cada 5 minutos
 def carregar_dados():
     try:
-        response = requests.get(URL_DRIVE_CSV)
+        # Simulamos um User-Agent de navegador para evitar bloqueios automáticos do Drive
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+        response = requests.get(URL_DRIVE_CSV, headers=headers)
+        
         if response.status_code == 200:
-            dados_csv = StringIO(response.text)
-            df = pd.read_csv(dados_csv, encoding='utf-8')
+            # Força a decodificação em UTF-8 ignorando caracteres corrompidos
+            conteudo_texto = response.content.decode('utf-8', errors='ignore')
+            dados_csv = StringIO(conteudo_texto)
+            df = pd.read_csv(dados_csv)
             
             # Limpeza básica e conversão de pontos para número
             df['Preco normal'] = pd.to_numeric(df['Preco normal'], errors='coerce')
@@ -41,9 +46,10 @@ def carregar_dados():
             df['Data partida_dt'] = pd.to_datetime(df['Data partida'], format='%d/%m/%Y', errors='coerce')
             return df
         else:
+            dt.error(f"Erro do Google Drive: Código de Status {response.status_code}")
             return pd.DataFrame()
     except Exception as e:
-        print(f"Erro ao carregar dados do Drive: {e}")
+        dt.error(f"Erro crítico ao ler o arquivo CSV do Drive: {e}")
         return pd.DataFrame()
 
 # Título do Dashboard
@@ -53,23 +59,25 @@ dt.markdown("Consulte os melhores preços em pontos e o custo real estimado em r
 df_voos = carregar_dados()
 
 if df_voos.empty:
-    dt.warning("⚠️ Não foi possível ler os dados da planilha do Google Drive. Lembre-se de verificar se o arquivo está compartilhado como 'Qualquer pessoa com o link pode ler' no seu painel do Drive.")
+    dt.warning("⚠️ A tabela de dados está vazia ou não pôde ser baixada do Google Drive.")
 else:
     # --- BARRA LATERAL: FILTROS ---
     dt.sidebar.header("🔍 Filtros de Busca")
     
+    # Filtro de Rota Combinada (Origem -> Destino)
     rotas_disponiveis = (df_voos['Origem'] + " -> " + df_voos['Destino']).unique()
     rota_selecionada = dt.sidebar.selectbox("Escolha a Rota:", sorted(rotas_disponiveis))
     
     origem_sel, destino_sel = rota_selecionada.split(" -> ")
     
+    # Filtrando a base pela rota antes de mostrar as datas
     df_filtrado_rota = df_voos[(df_voos['Origem'] == origem_sel) & (df_voos['Destino'] == destino_sel)]
     
     datas_disponiveis = sorted(df_filtrado_rota['Data partida_dt'].dropna().unique())
     datas_formatadas = [pd.to_datetime(d).strftime('%d/%m/%Y') for d in datas_disponiveis]
     
     if not datas_formatadas:
-        dt.info("Não há datas disponíveis para esta rota.")
+        dt.info("Não há datas disponíveis para esta rota na base de dados.")
     else:
         data_selecionada_str = dt.sidebar.selectbox("Data de Partida:", datas_formatadas)
         
@@ -142,7 +150,7 @@ else:
             # --- TABELA DE RESULTADOS ---
             dt.subheader(f"📋 Lista Completa de Voos para {rota_selecionada} em {data_selecionada_str}")
             
-            # Mapeamento do formato de colunas do seu banco
+            # Mapeamento do formato de colunas dinâmicas do seu banco de dados
             col_chegada = "Hora arrival" if "Hora arrival" in df_final.columns else "Hora chegada"
             
             df_exibicao = df_final[[
@@ -155,7 +163,7 @@ else:
                 "Preço Normal (Pts)", "Preço Clube (Pts)", "Taxas Totais (R$)", "Total Estimado (R$)", "Última Atualização"
             ]
             
-            # Formatação numérica para exibição visual limpa
+            # Formatação numérica para exibição visual limpa e elegante
             formatos = {
                 "Preço Normal (Pts)": "{:,.0f}".format,
                 "Preço Clube (Pts)": "{:,.0f}".format,
