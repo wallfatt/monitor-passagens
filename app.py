@@ -7,28 +7,26 @@ from datetime import datetime
 # Configuração da página do Streamlit
 dt.set_page_config(page_title="Radar de Voos - Azul Pontos", layout="wide", page_icon="✈️")
 
-# LINK DO SEU GOOGLE DRIVE (Preparado para baixar o CSV gerado pela imagem)
+# LINK DO SEU GOOGLE DRIVE (Ajustado para download direto do CSV puros)
 ID_PLANILHA = "1kW2FY4lAxRcp2ZSmBVfeuUWgqGZprLE4"
 URL_DRIVE_CSV = f"https://docs.google.com/uc?export=download&id={ID_PLANILHA}"
 
-@dt.cache_data(ttl=120)  # Atualiza o cache a cada 2 minutos
+@dt.cache_data(ttl=120)  # Cache curto de 2 minutos para carregar rápido
 def carregar_dados():
     try:
-        # Usa o User-Agent para o Google Drive não bloquear o download
-        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+        # Simulamos um User-Agent de navegador para evitar bloqueios do Drive
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
         response = requests.get(URL_DRIVE_CSV, headers=headers)
-        
         if response.status_code == 200:
             conteudo_texto = response.content.decode('utf-8', errors='ignore')
-            dados_csv = StringIO(conteudo_texto)
-            df = pd.read_csv(dados_csv)
+            df = pd.read_csv(StringIO(conteudo_texto))
             
-            # Limpeza de segurança (remove linhas em branco geradas no arquivo)
+            # Limpeza básica (remove linhas em branco geradas no arquivo)
             df = df.dropna(subset=['Origem', 'Destino', 'Data partida'])
             df['Origem'] = df['Origem'].astype(str).str.strip().str.upper()
             df['Destino'] = df['Destino'].astype(str).str.strip().str.upper()
             
-            # Converte os preços para numérico de forma segura
+            # Converte os preços para numérico
             df['Preco normal'] = pd.to_numeric(df['Preco normal'], errors='coerce')
             df['Preco clube'] = pd.to_numeric(df['Preco clube'], errors='coerce')
             
@@ -39,23 +37,22 @@ def carregar_dados():
         else:
             dt.error(f"Erro do Google Drive: {response.status_code}")
             return pd.DataFrame()
-    except Exception as e:
-        dt.error(f"Falha na conexão com o Drive: {e}")
+    except:
         return pd.DataFrame()
 
 # Título do Dashboard
 dt.title("✈️ Dashboard - Monitoramento de Voos Azul Pontos")
-dt.markdown("Consulte os melhores preços em milhas coletados pelo robô buscador.")
+dt.markdown("Consulte os melhores preços em milhas coletados pelo robô buscador hospedado no Drive.")
 
 df_voos = carregar_dados()
 
 if df_voos.empty:
-    dt.warning("⚠️ A planilha não pôde ser carregada do Google Drive ou está vazia.")
+    dt.warning("⚠️ A planilha não pôde ser carregada ou está vazia. Verifique se o arquivo está compartilhado corretamente.")
 else:
     # --- BARRA LATERAL: FILTROS ---
     dt.sidebar.header("🔍 Filtros de Busca")
     
-    # Filtro de Rota unificado (com tratamento contra erros)
+    # Filtro de Rota Combinada (com tratamento contra erros)
     df_voos['Rota'] = df_voos['Origem'] + " -> " + df_voos['Destino']
     rotas_disponiveis = sorted(list(df_voos['Rota'].dropna().unique()))
     
@@ -81,7 +78,7 @@ else:
             opcoes_voo.append("Com Conexão")
         tipo_voo = dt.sidebar.radio("Tipo de Voo:", opcoes_voo)
 
-        # Aplicação final dos filtros no DataFrame
+        # Aplicação final dos filtros
         df_final = df_filtrado_rota[df_filtrado_rota['Data partida'] == data_selecionada_str].copy()
         
         if tipo_voo == "Apenas Direto":
@@ -92,11 +89,12 @@ else:
         # Ordenar por menor preço do clube
         df_final = df_final.sort_values(by="Preco clube", ascending=True)
 
-        # --- CARD PRINCIPAL: INDICADORES ---
+        # --- TELA PRINCIPAL DIVIDIDA ---
         if not df_final.empty:
             melhor_voo = df_final.iloc[0]
             
-            col1, col2, col3, col4 = dt.columns(4)
+            # 1. CARDS DE INDICADORES (Apenas 3 cards, conforme pedido)
+            col1, col2, col3 = dt.columns(3)
             
             with col1:
                 dt.metric(
@@ -111,20 +109,14 @@ else:
                     value=f"{int(media_clube):,} pts".replace(",", ".")
                 )
             with col3:
-                dt.metric(
-                    label="🕒 Horário de Partida", 
-                    value=f"{melhor_voo['Hora partida']} -> {melhor_voo['Hora chegada']}"
-                )
-            with col4:
-                texto_conexao = "Direto" if melhor_voo['Numero voos'] == 1 else f"{int(melhor_voo['Numero voos'])-1} conexão(ões)"
-                dt.metric(label="✈️ Conexões (Melhor Voo)", value=texto_conexao)
+                texto_conexao = "Voo Direto" if melhor_voo['Numero voos'] == 1 else f"{int(melhor_voo['Numero voos'])-1} conexão(ões)"
+                dt.metric(label="✈️ Informação de Voo", value=texto_conexao, delta=f"{melhor_voo['Hora partida']} ➔ {melhor_voo['Hora chegada']}")
                 
             dt.markdown("---")
             
-            # --- TABELA DE RESULTADOS ---
+            # 2. TABELA DE RESULTADOS (Abaixo dos cards)
             dt.subheader(f"📋 Voos Disponíveis para {rota_selecionada} em {data_selecionada_str}")
             
-            # Formatando a tabela para exibição visual
             df_exibicao = df_final[[
                 "Hora partida", "Hora chegada", "Duracao", "Numero voos", "Preco normal", "Preco clube", "Hora pesquisa"
             ]].copy()
@@ -133,7 +125,7 @@ else:
                 "Saída", "Chegada", "Duração", "Total de Voos", "Preço Normal (Pts)", "Preço Clube (Pts)", "Última Atualização"
             ]
             
-            # Exibe a tabela destacando o preço mais baixo da coluna
+            # Tabela estilizada nativa
             dt.dataframe(
                 df_exibicao.style.format({
                     "Preço Normal (Pts)": "{:,.0f}".format,
@@ -142,7 +134,7 @@ else:
                 use_container_width=True
             )
             
-            # Histórico de Coletas (Gráfico de linha de variação)
+            # 3. HISTÓRICO DE COLETAS (Na base da tela)
             dt.markdown("---")
             dt.subheader("📈 Histórico de Variação de Preço (Evolução das Coletas)")
             
@@ -155,7 +147,7 @@ else:
                 df_grafico = df_historico.set_index("Data pesquisa")[["Preco normal", "Preco clube"]]
                 dt.line_chart(df_grafico)
             else:
-                dt.info("💡 À medida que o robô rodar mais vezes, um gráfico de evolução de preços aparecerá aqui automaticamente.")
+                dt.info("💡 À medida que o robô rodar mais vezes em horários diferentes, o gráfico de variação de preços aparecerá aqui.")
                 
         else:
             dt.info("❌ Nenhum voo encontrado com os filtros selecionados.")
