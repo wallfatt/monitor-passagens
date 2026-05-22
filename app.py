@@ -59,7 +59,6 @@ def carregar_dados():
             df['Preco clube'] = pd.to_numeric(df['Preco clube'], errors='coerce')
             df['Numero voos'] = pd.to_numeric(df['Numero voos'], errors='coerce').fillna(1).astype(int)
             
-            # Converte as durações de texto para minutos numéricos
             df['Duracao_Minutos'] = df['Duracao'].apply(converter_duracao_para_minutos)
             
             df['Data partida_dt'] = pd.to_datetime(df['Data partida'], format='%d/%m/%Y', errors='coerce')
@@ -171,7 +170,6 @@ else:
     origem_ida, destino_ida = rota_selecionada.split(" -> ")
     origem_volta, destino_volta = destino_ida, origem_ida
     
-    # 1. ALTERADO PARA BULLET (RADIO) CONFORME SOLICITADO
     modo_visualizacao = dt.sidebar.radio(
         "Mostrar valores em:", 
         ["Pontos", "Reais (Clube)", "Reais (Normal)"]
@@ -184,7 +182,6 @@ else:
         format="%.2f"
     )
 
-    # Separação prévia das bases para calcular os limites dinâmicos dos sliders
     df_ida_total = df_voos[(df_voos['Origem'] == origem_ida) & (df_voos['Destino'] == destino_ida)]
     df_volta_total = df_voos[(df_voos['Origem'] == origem_volta) & (df_voos['Destino'] == destino_volta)]
 
@@ -228,15 +225,14 @@ else:
     else:
         slider_tempo_volta = dt.sidebar.slider("Volta: Tempo total voo (Horas)", min_t_volta, max_t_volta, (min_t_volta, max_t_volta), step=0.5, format="%.1fh")
 
-    # Informação fixa sobre a Taxa Azul
     dt.sidebar.markdown("---")
     dt.sidebar.info("💡 **Atenção (Regra Azul):**\nVoos com menos de 90 dias da data atual pagam uma taxa extra de emissão no valor de **R$ 49,90**. Esse valor já é somado automaticamente no cálculo em Reais.")
 
     # --- PROCESSAMENTO E FILTRAGEM DINÂMICA ---
-    df_ida_processado = processar_custos(df_ida_total,起源_sel=origem_ida, valor_milheiro=valor_milheiro)
+    # Linha corrigida aqui:
+    df_ida_processado = processar_custos(df_ida_total, origem=origem_ida, valor_milheiro=valor_milheiro)
     df_volta_processado = processar_custos(df_volta_total, origem=origem_volta, valor_milheiro=valor_milheiro)
 
-    # Aplicação dos filtros das barras móveis (só alteram se o usuário mexer, pois começam com o range máximo)
     df_ida_processado = df_ida_processado[
         (df_ida_processado['Numero voos'] >= slider_voos_ida[0]) & (df_ida_processado['Numero voos'] <= slider_voos_ida[1]) &
         (df_ida_processado['Duracao_Minutos'] >= slider_tempo_ida[0] * 60) & (df_ida_processado['Duracao_Minutos'] <= slider_tempo_ida[1] * 60)
@@ -247,7 +243,6 @@ else:
         (df_volta_processado['Duracao_Minutos'] >= slider_tempo_volta[0] * 60) & (df_volta_processado['Duracao_Minutos'] <= slider_tempo_volta[1] * 60)
     ]
 
-    # Meses disponíveis unificados
     meses_disponiveis = sorted(
         pd.concat([df_ida_processado['Mês/Ano'], df_volta_processado['Mês/Ano']]).dropna().unique(),
         key=lambda x: datetime.strptime(x, "%m/%Y")
