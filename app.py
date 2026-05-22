@@ -2,45 +2,58 @@ import streamlit as st
 import pandas as pd
 import calendar
 
-# 1. Configuração da página (Uso total da tela)
+# 1. Configuração da página
 st.set_page_config(page_title="Radar Azul - Ida e Volta", layout="wide")
 st.title("✈️ Radar de Passagens - Ida e Volta")
 
-# Link do Google Drive convertido para modo de leitura direta
-caminho_csv = "https://drive.google.com/uc?export=download&id=1VFLoXan_R9NgwPrk_Qw5VZg1wrdtMraI"
+caminho_csv = "https://drive.google.com/uc?export=download&id=1VFLoXan_R9NgwPrk_qu5VZg1wrdtMraI"
 
 st.sidebar.header("⚙️ Status do Arquivo")
 st.sidebar.info("🌐 Lendo dados da nuvem...")
 
-# --- CSS DO CALENDÁRIO COMPACTO ---
-# Reduzimos paddings, fontes e alturas para caberem lado a lado perfeitamente
+# --- CSS DO CALENDÁRIO ---
 st.markdown("""
 <style>
     .cal-container { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; margin-bottom: 20px; }
     .cal-header { text-align: center; font-weight: bold; padding: 2px; color: #555; font-size: 0.85em; }
-    .cal-day { padding: 5px 2px; border-radius: 4px; text-align: center; border: 1px solid #e0e0e0; display: flex; flex-direction: column; justify-content: center; min-height: 55px;}
+    .cal-day { padding: 5px 2px; border-radius: 4px; text-align: center; border: 1px solid #e0e0e0; display: flex; flex-direction: column; justify-content: center; min-height: 55px; cursor: help;}
+    .cal-day:hover { transform: scale(1.05); transition: 0.2s; box-shadow: 0 4px 8px rgba(0,0,0,0.1); }
     .cal-date { font-weight: bold; font-size: 0.9em; margin-bottom: 2px; color: #333;}
     .cal-price { font-size: 0.75em; font-weight: 700; line-height: 1.1;}
     .best-price { background-color: #28a745; color: white; border-color: #28a745; box-shadow: 0 2px 4px rgba(40,167,69,0.3);}
     .cheap { background-color: #d4edda; color: #155724; border-color: #c3e6cb; }
     .medium { background-color: #fff3cd; color: #856404; border-color: #ffeeba; }
     .expensive { background-color: #f8d7da; color: #721c24; border-color: #f5c6cb; }
-    .empty { background-color: #f8f9fa; color: #adb5bd; }
+    .empty { background-color: #f8f9fa; color: #adb5bd; cursor: default; }
+    .empty:hover { transform: none; box-shadow: none; }
     .blank { background: transparent; border: none; }
 </style>
 """, unsafe_allow_html=True)
 
 def limpar_preco(preco_val):
-    if pd.isna(preco_val):
-        return None
+    if pd.isna(preco_val): return None
     preco_str = str(preco_val).strip()
-    if "Ind" in preco_str or "Não" in preco_str:
-        return None
+    if "Ind" in preco_str or "Não" in preco_str: return None
     try:
-        preco_float = float(preco_str.replace(',', '.'))
-        return int(preco_float * 1000)
+        return int(float(preco_str.replace(',', '.')) * 1000)
     except:
         return None
+
+def criar_dicionario_tooltips(df_rota):
+    """Gera o texto que aparecerá ao passar o mouse sobre cada dia, ordenado por preço."""
+    voos_dict = {}
+    if df_rota.empty: return voos_dict
+    
+    for data, grupo in df_rota.groupby('Data Formatada'):
+        grupo_ordenado = grupo.sort_values('Preco_Num', na_position='last')
+        linhas = [f"Voos em {data.strftime('%d/%m/%Y')}:"]
+        
+        for _, row in grupo_ordenado.iterrows():
+            preco = f"{int(row['Preco_Num']):,} Pts".replace(",", ".") if pd.notna(row['Preco_Num']) else "Esgotado"
+            linhas.append(f"• {row['Partida']} ➔ {row['Chegada']} | {preco}")
+            
+        voos_dict[data] = "&#10;".join(linhas) # &#10; é o código HTML para quebra de linha no tooltip
+    return voos_dict
 
 @st.cache_data(ttl=30)
 def carregar_dados():
@@ -52,8 +65,7 @@ def carregar_dados():
         st.error(f"Erro ao ler o CSV da nuvem: {e}")
         return None
 
-# Função auxiliar para gerar o HTML do calendário (evita repetição de código)
-def gerar_html_calendario(ano, mes, precos_diarios, min_abs, lim_barato, lim_medio):
+def gerar_html_calendario(ano, mes, precos_diarios, min_abs, lim_barato, lim_medio, tooltips_dict):
     cal = calendar.monthcalendar(ano, mes)
     html_cal = '<div class="cal-container">'
     
@@ -66,6 +78,8 @@ def gerar_html_calendario(ano, mes, precos_diarios, min_abs, lim_barato, lim_med
                 html_cal += '<div class="blank"></div>'
             else:
                 data_atual = pd.Timestamp(year=ano, month=mes, day=dia)
+                tooltip_texto = tooltips_dict.get(data_atual, "Sem voos cadastrados")
+                
                 if precos_diarios is not None and data_atual in precos_diarios.index and pd.notna(precos_diarios[data_atual]):
                     preco = precos_diarios[data_atual]
                     preco_exibicao = f"{int(preco):,} Pts".replace(",", ".")
@@ -75,9 +89,9 @@ def gerar_html_calendario(ano, mes, precos_diarios, min_abs, lim_barato, lim_med
                     elif preco <= lim_medio: css_class = "medium"
                     else: css_class = "expensive"
                         
-                    html_cal += f'<div class="cal-day {css_class}"><div class="cal-date">{dia}</div><div class="cal-price">{preco_exibicao}</div></div>'
+                    html_cal += f'<div class="cal-day {css_class}" title="{tooltip_texto}"><div class="cal-date">{dia}</div><div class="cal-price">{preco_exibicao}</div></div>'
                 else:
-                    html_cal += f'<div class="cal-day empty"><div class="cal-date">{dia}</div><div class="cal-price">-</div></div>'
+                    html_cal += f'<div class="cal-day empty" title="Sem opções para este dia"><div class="cal-date">{dia}</div><div class="cal-price">-</div></div>'
     html_cal += '</div>'
     return html_cal
 
@@ -95,89 +109,88 @@ if df_bruto is not None:
         df_processado['Preco_Num'] = df_processado[col_preco].apply(limpar_preco)
         
         st.sidebar.header("🔎 Selecione a Ida")
-        st.sidebar.write("*(A volta será calculada automaticamente)*")
         origens = sorted(df_processado["Origem"].dropna().unique())
         origem_sel = st.sidebar.selectbox("Origem (Ida):", origens)
         
         destinos = sorted(df_processado[df_processado["Origem"] == origem_sel]["Destino"].dropna().unique())
         destino_sel = st.sidebar.selectbox("Destino (Ida):", destinos)
         
-        # Separa os dados de IDA e VOLTA
         df_ida = df_processado[(df_processado["Origem"] == origem_sel) & (df_processado["Destino"] == destino_sel)].copy()
         df_volta = df_processado[(df_processado["Origem"] == destino_sel) & (df_processado["Destino"] == origem_sel)].copy()
         
         if not df_ida.empty or not df_volta.empty:
             
-            # Divide a tela em duas colunas principais
+            tooltips_ida = criar_dicionario_tooltips(df_ida)
+            tooltips_volta = criar_dicionario_tooltips(df_volta)
+            
             col_ida, col_volta = st.columns(2)
             
-            with col_ida:
-                st.subheader(f"🛫 IDA: {origem_sel} ➔ {destino_sel}")
-            with col_volta:
-                st.subheader(f"🛬 VOLTA: {destino_sel} ➔ {origem_sel}")
+            with col_ida: st.subheader(f"🛫 IDA: {origem_sel} ➔ {destino_sel}")
+            with col_volta: st.subheader(f"🛬 VOLTA: {destino_sel} ➔ {origem_sel}")
             
-            # Calcula os limites de cores para a IDA
+            # Limites Ida
             if not df_ida.empty:
                 precos_ida = df_ida.groupby('Data Formatada')['Preco_Num'].min()
                 min_ida = precos_ida.min()
-                max_ida = precos_ida.max()
-                dif_ida = max_ida - min_ida
+                dif_ida = precos_ida.max() - min_ida
                 barato_ida = min_ida + (dif_ida * 0.25)
                 medio_ida = min_ida + (dif_ida * 0.60)
             else:
                 precos_ida = None; min_ida = barato_ida = medio_ida = 0
                 
-            # Calcula os limites de cores para a VOLTA
+            # Limites Volta
             if not df_volta.empty:
                 precos_volta = df_volta.groupby('Data Formatada')['Preco_Num'].min()
                 min_volta = precos_volta.min()
-                max_volta = precos_volta.max()
-                dif_volta = max_volta - min_volta
+                dif_volta = precos_volta.max() - min_volta
                 barato_volta = min_volta + (dif_volta * 0.25)
                 medio_volta = min_volta + (dif_volta * 0.60)
             else:
                 precos_volta = None; min_volta = barato_volta = medio_volta = 0
 
-            # Descobre todos os meses que precisamos desenhar (juntando ida e volta)
             meses_ida = df_ida['Data Formatada'].dropna().dt.to_period('M').unique() if not df_ida.empty else []
             meses_volta = df_volta['Data Formatada'].dropna().dt.to_period('M').unique() if not df_volta.empty else []
             todos_meses = sorted(list(set(meses_ida).union(set(meses_volta))))
-            
             meses_pt = {1: 'Janeiro', 2: 'Fevereiro', 3: 'Março', 4: 'Abril', 5: 'Maio', 6: 'Junho', 7: 'Julho', 8: 'Agosto', 9: 'Setembro', 10: 'Outubro', 11: 'Novembro', 12: 'Dezembro'}
             
-            # Renderiza os calendários lado a lado, mês a mês
             for mes_ano in todos_meses:
-                ano = mes_ano.year
-                mes = mes_ano.month
+                ano = mes_ano.year; mes = mes_ano.month
                 
                 with col_ida:
                     st.markdown(f"#### {meses_pt[mes]} {ano}")
-                    html_ida = gerar_html_calendario(ano, mes, precos_ida, min_ida, barato_ida, medio_ida)
+                    html_ida = gerar_html_calendario(ano, mes, precos_ida, min_ida, barato_ida, medio_ida, tooltips_ida)
                     st.markdown(html_ida, unsafe_allow_html=True)
                     
                 with col_volta:
                     st.markdown(f"#### {meses_pt[mes]} {ano}")
-                    html_volta = gerar_html_calendario(ano, mes, precos_volta, min_volta, barato_volta, medio_volta)
+                    html_volta = gerar_html_calendario(ano, mes, precos_volta, min_volta, barato_volta, medio_volta, tooltips_volta)
                     st.markdown(html_volta, unsafe_allow_html=True)
                 
-                # Linha divisória suave entre os meses
                 st.markdown("<hr style='margin: 10px 0; opacity: 0.2;'>", unsafe_allow_html=True)
                 
+            # --- SEÇÃO DE INSPEÇÃO DETALHADA ---
             st.markdown("---")
-            st.subheader("📋 Lista Detalhada dos Voos")
+            st.subheader("🔍 Inspeção Diária de Horários")
+            st.write("Deseja ver todos os detalhes em formato de tabela? Selecione a data exata abaixo (os voos aparecerão do mais barato ao mais caro).")
             
-            # Exibe tabelas separadas para facilitar a leitura
-            tab1, tab2 = st.tabs(["Voos de Ida", "Voos de Volta"])
-            with tab1:
-                if not df_ida.empty:
-                    st.dataframe(df_ida.drop(columns=['Data Formatada', 'Preco_Num']).rename(columns={col_preco: "Pontos (Mil)"}), use_container_width=True)
-                else:
-                    st.info("Sem dados para a ida.")
-            with tab2:
-                if not df_volta.empty:
-                    st.dataframe(df_volta.drop(columns=['Data Formatada', 'Preco_Num']).rename(columns={col_preco: "Pontos (Mil)"}), use_container_width=True)
-                else:
-                    st.info("Sem dados para a volta.")
+            col_detalhe_ida, col_detalhe_volta = st.columns(2)
+            
+            with col_detalhe_ida:
+                datas_ida_lista = [d.strftime('%d/%m/%Y') for d in sorted(df_ida['Data Formatada'].dropna().unique())] if not df_ida.empty else []
+                if datas_ida_lista:
+                    dia_ida = st.selectbox("Detalhar dia de Ida:", ["Selecione..."] + datas_ida_lista)
+                    if dia_ida != "Selecione...":
+                        df_filtro = df_ida[df_ida['Data Formatada'] == pd.to_datetime(dia_ida, format='%d/%m/%Y')].sort_values('Preco_Num', na_position='last')
+                        st.dataframe(df_filtro.drop(columns=['Data Formatada', 'Preco_Num']).rename(columns={col_preco: "Pontos (Mil)"}), hide_index=True)
+                        
+            with col_detalhe_volta:
+                datas_volta_lista = [d.strftime('%d/%m/%Y') for d in sorted(df_volta['Data Formatada'].dropna().unique())] if not df_volta.empty else []
+                if datas_volta_lista:
+                    dia_volta = st.selectbox("Detalhar dia de Volta:", ["Selecione..."] + datas_volta_lista)
+                    if dia_volta != "Selecione...":
+                        df_filtro = df_volta[df_volta['Data Formatada'] == pd.to_datetime(dia_volta, format='%d/%m/%Y')].sort_values('Preco_Num', na_position='last')
+                        st.dataframe(df_filtro.drop(columns=['Data Formatada', 'Preco_Num']).rename(columns={col_preco: "Pontos (Mil)"}), hide_index=True)
+
         else:
             st.info("Nenhuma data encontrada para esta rota.")
     else:
