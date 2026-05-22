@@ -6,10 +6,11 @@ import calendar
 st.set_page_config(page_title="Radar Azul - Ida e Volta", layout="wide")
 st.title("✈️ Radar de Passagens - Ida e Volta")
 
-caminho_csv = "https://drive.google.com/uc?export=download&id=1VFLoXan_R9NgwPrk_qu5VZg1wrdtMraI"
+# Link corrigido (com as letras maiúsculas e minúsculas exatas)
+caminho_csv = "https://drive.google.com/uc?export=download&id=1VFLoXan_R9NgwPrk_Qw5VZg1wrdtMraI"
 
-st.sidebar.header("⚙️ Status do Arquivo")
-st.sidebar.info("🌐 Lendo dados da nuvem...")
+st.sidebar.header("⚙️ Estado do Ficheiro")
+st.sidebar.info("🌐 A ler dados da nuvem...")
 
 # --- CSS DO CALENDÁRIO ---
 st.markdown("""
@@ -40,7 +41,7 @@ def limpar_preco(preco_val):
         return None
 
 def criar_dicionario_tooltips(df_rota):
-    """Gera o texto que aparecerá ao passar o mouse sobre cada dia, ordenado por preço."""
+    """Gera o texto que aparecerá ao passar o rato sobre cada dia, ordenado por preço."""
     voos_dict = {}
     if df_rota.empty: return voos_dict
     
@@ -52,7 +53,7 @@ def criar_dicionario_tooltips(df_rota):
             preco = f"{int(row['Preco_Num']):,} Pts".replace(",", ".") if pd.notna(row['Preco_Num']) else "Esgotado"
             linhas.append(f"• {row['Partida']} ➔ {row['Chegada']} | {preco}")
             
-        voos_dict[data] = "&#10;".join(linhas) # &#10; é o código HTML para quebra de linha no tooltip
+        voos_dict[data] = "&#10;".join(linhas) # &#10; é a quebra de linha no HTML
     return voos_dict
 
 @st.cache_data(ttl=30)
@@ -78,7 +79,7 @@ def gerar_html_calendario(ano, mes, precos_diarios, min_abs, lim_barato, lim_med
                 html_cal += '<div class="blank"></div>'
             else:
                 data_atual = pd.Timestamp(year=ano, month=mes, day=dia)
-                tooltip_texto = tooltips_dict.get(data_atual, "Sem voos cadastrados")
+                tooltip_texto = tooltips_dict.get(data_atual, "Sem voos registados")
                 
                 if precos_diarios is not None and data_atual in precos_diarios.index and pd.notna(precos_diarios[data_atual]):
                     preco = precos_diarios[data_atual]
@@ -168,10 +169,10 @@ if df_bruto is not None:
                 
                 st.markdown("<hr style='margin: 10px 0; opacity: 0.2;'>", unsafe_allow_html=True)
                 
-            # --- SEÇÃO DE INSPEÇÃO DETALHADA ---
+            # --- SECÇÃO DE INSPEÇÃO DETALHADA ---
             st.markdown("---")
             st.subheader("🔍 Inspeção Diária de Horários")
-            st.write("Deseja ver todos os detalhes em formato de tabela? Selecione a data exata abaixo (os voos aparecerão do mais barato ao mais caro).")
+            st.write("Deseja ver todos os detalhes em formato de tabela? Selecione a data exata abaixo (os voos aparecerão do mais barato para o mais caro).")
             
             col_detalhe_ida, col_detalhe_volta = st.columns(2)
             
