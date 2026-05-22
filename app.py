@@ -156,11 +156,11 @@ if df_bruto is not None:
         
         valor_milheiro = 0.0
         if modo_exibicao == "Reais":
-            valor_milheiro = st.sidebar.number_input("Valor de 1.000 pontos (R$):", min_value=0.01, value=15.00, step=0.50, format="%.2f")
+            # VALOR ATUALIZADO PARA 17.00 COMO PADRÃO INICIAL
+            valor_milheiro = st.sidebar.number_input("Valor de 1.000 pontos (R$):", min_value=0.01, value=17.00, step=0.50, format="%.2f")
             st.sidebar.caption("*Inclui a taxa de embarque do aeroporto e a taxa de emissão da Azul (R$ 49,90) para voos com menos de 90 dias.*")
         
         # CÁLCULO DE TAXAS E VALOR FINAL
-        # Correção aplicada nesta linha para usar o relógio do Pandas
         hoje = pd.Timestamp.now().normalize()
         
         def calcular_valor_referencia(row):
