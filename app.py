@@ -4,9 +4,10 @@ import requests
 from io import StringIO
 from datetime import datetime
 import calendar
+import re
 
 # Configuração da página do Streamlit
-dt.set_page_config(page_title="Radar de Voos - Calendários", layout="wide", page_icon="✈️")
+dt.set_page_config(page_title="Radar de Voos - Filtros Avançados", layout="wide", page_icon="✈️")
 
 # LINK DO GOOGLE DRIVE
 ID_PLANILHA = "1kW2FY4lAxRcp2ZSmBVfeuUWgqGZprLE4"
@@ -23,6 +24,24 @@ TAXAS_AEROPORTO = {
 }
 TAXA_PADRAO = 50.00
 
+def converter_duracao_para_minutos(dur_str):
+    if pd.isna(dur_str) or not isinstance(dur_str, str):
+        return 0
+    dur_str = dur_str.lower()
+    horas = 0
+    minutos = 0
+    match_h = re.search(r'(\d+)\s*h', dur_str)
+    match_m = re.search(r'(\d+)\s*m', dur_str)
+    if match_h:
+        horas = int(match_h.group(1))
+    if match_m:
+        minutos = int(match_m.group(1))
+    if not match_h and not match_m:
+        match_puro = re.search(r'(\d+)', dur_str)
+        if match_puro:
+            minutos = int(match_puro.group(1))
+    return (horas * 60) + minutos
+
 @dt.cache_data(ttl=120)
 def carregar_dados():
     try:
@@ -38,6 +57,10 @@ def carregar_dados():
             
             df['Preco normal'] = pd.to_numeric(df['Preco normal'], errors='coerce')
             df['Preco clube'] = pd.to_numeric(df['Preco clube'], errors='coerce')
+            df['Numero voos'] = pd.to_numeric(df['Numero voos'], errors='coerce').fillna(1).astype(int)
+            
+            # Converte as durações de texto para minutos numéricos
+            df['Duracao_Minutos'] = df['Duracao'].apply(converter_duracao_para_minutos)
             
             df['Data partida_dt'] = pd.to_datetime(df['Data partida'], format='%d/%m/%Y', errors='coerce')
             df['Mês/Ano'] = df['Data partida_dt'].dt.strftime('%m/%Y')
@@ -99,7 +122,6 @@ def gerar_html_calendario(df_mes, ano, mes, coluna_valor, titulo, taxa_base, is_
             else:
                 if day in df_dia:
                     val = df_dia[day]
-                    # O peso agora é baseado na escala global
                     peso = (val - val_min) / val_range
                     
                     if peso < 0.5:
@@ -139,7 +161,7 @@ df_voos = carregar_dados()
 if df_voos.empty:
     dt.warning("⚠️ Os dados ainda não foram processados ou a planilha está vazia.")
 else:
-    # --- MENU LATERAL (FILTROS E AVISOS) ---
+    # --- MENU LATERAL (FILTROS) ---
     dt.sidebar.header("🔍 Configurações de Busca")
     
     df_voos['Rota_Ida'] = df_voos['Origem'] + " -> " + df_voos['Destino']
@@ -149,7 +171,8 @@ else:
     origem_ida, destino_ida = rota_selecionada.split(" -> ")
     origem_volta, destino_volta = destino_ida, origem_ida
     
-    modo_visualizacao = dt.sidebar.selectbox(
+    # 1. ALTERADO PARA BULLET (RADIO) CONFORME SOLICITADO
+    modo_visualizacao = dt.sidebar.radio(
         "Mostrar valores em:", 
         ["Pontos", "Reais (Clube)", "Reais (Normal)"]
     )
@@ -160,17 +183,71 @@ else:
         step=0.50,
         format="%.2f"
     )
+
+    # Separação prévia das bases para calcular os limites dinâmicos dos sliders
+    df_ida_total = df_voos[(df_voos['Origem'] == origem_ida) & (df_voos['Destino'] == destino_ida)]
+    df_volta_total = df_voos[(df_voos['Origem'] == origem_volta) & (df_voos['Destino'] == destino_volta)]
+
+    # --- CONFIGURAÇÃO DOS SLIDERS DINÂMICOS (IDA) ---
+    dt.sidebar.markdown("---")
+    dt.sidebar.subheader("✈️ Filtros da Ida")
     
+    min_v_ida = int(df_ida_total['Numero voos'].min()) if not df_ida_total.empty else 1
+    max_v_ida = int(df_ida_total['Numero voos'].max()) if not df_ida_total.empty else 1
+    if min_v_ida == max_v_ida:
+        dt.sidebar.text(f"Número de voos (Ida): Fixo em {min_v_ida}")
+        slider_voos_ida = (min_v_ida, max_v_ida)
+    else:
+        slider_voos_ida = dt.sidebar.slider("Ida: Número de voos (Conexões)", min_v_ida, max_v_ida, (min_v_ida, max_v_ida))
+
+    min_t_ida = round(float(df_ida_total['Duracao_Minutos'].min() / 60), 1) if not df_ida_total.empty else 0.0
+    max_t_ida = round(float(df_ida_total['Duracao_Minutos'].max() / 60), 1) if not df_ida_total.empty else 24.0
+    if min_t_ida == max_t_ida:
+        dt.sidebar.text(f"Tempo total (Ida): Fixo em {min_t_ida}h")
+        slider_tempo_ida = (min_t_ida, max_t_ida)
+    else:
+        slider_tempo_ida = dt.sidebar.slider("Ida: Tempo total voo (Horas)", min_t_ida, max_t_ida, (min_t_ida, max_t_ida), step=0.5, format="%.1fh")
+
+    # --- CONFIGURAÇÃO DOS SLIDERS DINÂMICOS (VOLTA) ---
+    dt.sidebar.markdown("---")
+    dt.sidebar.subheader("🔄 Filtros da Volta")
+    
+    min_v_volta = int(df_volta_total['Numero voos'].min()) if not df_volta_total.empty else 1
+    max_v_volta = int(df_volta_total['Numero voos'].max()) if not df_volta_total.empty else 1
+    if min_v_volta == max_v_volta:
+        dt.sidebar.text(f"Número de voos (Volta): Fixo em {min_v_volta}")
+        slider_voos_volta = (min_v_volta, max_v_volta)
+    else:
+        slider_voos_volta = dt.sidebar.slider("Volta: Número de voos (Conexões)", min_v_volta, max_v_volta, (min_v_volta, max_v_volta))
+
+    min_t_volta = round(float(df_volta_total['Duracao_Minutos'].min() / 60), 1) if not df_volta_total.empty else 0.0
+    max_t_volta = round(float(df_volta_total['Duracao_Minutos'].max() / 60), 1) if not df_volta_total.empty else 24.0
+    if min_t_volta == max_t_volta:
+        dt.sidebar.text(f"Tempo total (Volta): Fixo em {min_t_volta}h")
+        slider_tempo_volta = (min_t_volta, max_t_volta)
+    else:
+        slider_tempo_volta = dt.sidebar.slider("Volta: Tempo total voo (Horas)", min_t_volta, max_t_volta, (min_t_volta, max_t_volta), step=0.5, format="%.1fh")
+
+    # Informação fixa sobre a Taxa Azul
     dt.sidebar.markdown("---")
     dt.sidebar.info("💡 **Atenção (Regra Azul):**\nVoos com menos de 90 dias da data atual pagam uma taxa extra de emissão no valor de **R$ 49,90**. Esse valor já é somado automaticamente no cálculo em Reais.")
 
-    # --- PROCESSAMENTO DOS DADOS ---
-    df_ida = df_voos[(df_voos['Origem'] == origem_ida) & (df_voos['Destino'] == destino_ida)]
-    df_ida_processado = processar_custos(df_ida, origem_ida, valor_milheiro)
-    
-    df_volta = df_voos[(df_voos['Origem'] == origem_volta) & (df_voos['Destino'] == destino_volta)]
-    df_volta_processado = processar_custos(df_volta, origem_volta, valor_milheiro)
+    # --- PROCESSAMENTO E FILTRAGEM DINÂMICA ---
+    df_ida_processado = processar_custos(df_ida_total,起源_sel=origem_ida, valor_milheiro=valor_milheiro)
+    df_volta_processado = processar_custos(df_volta_total, origem=origem_volta, valor_milheiro=valor_milheiro)
 
+    # Aplicação dos filtros das barras móveis (só alteram se o usuário mexer, pois começam com o range máximo)
+    df_ida_processado = df_ida_processado[
+        (df_ida_processado['Numero voos'] >= slider_voos_ida[0]) & (df_ida_processado['Numero voos'] <= slider_voos_ida[1]) &
+        (df_ida_processado['Duracao_Minutos'] >= slider_tempo_ida[0] * 60) & (df_ida_processado['Duracao_Minutos'] <= slider_tempo_ida[1] * 60)
+    ]
+    
+    df_volta_processado = df_volta_processado[
+        (df_volta_processado['Numero voos'] >= slider_voos_volta[0]) & (df_volta_processado['Numero voos'] <= slider_voos_volta[1]) &
+        (df_volta_processado['Duracao_Minutos'] >= slider_tempo_volta[0] * 60) & (df_volta_processado['Duracao_Minutos'] <= slider_tempo_volta[1] * 60)
+    ]
+
+    # Meses disponíveis unificados
     meses_disponiveis = sorted(
         pd.concat([df_ida_processado['Mês/Ano'], df_volta_processado['Mês/Ano']]).dropna().unique(),
         key=lambda x: datetime.strptime(x, "%m/%Y")
@@ -186,13 +263,10 @@ else:
         coluna_valor = 'Custo Real Normal'
         is_pontos = False
 
-    # --- CALCULA A ESCALA GLOBAL DE CORES PARA TODA A ROTA ---
+    # --- ESCALA GLOBAL DE CORES ---
     valores_globais = pd.concat([df_ida_processado[coluna_valor], df_volta_processado[coluna_valor]]).dropna()
-    if not valores_globais.empty:
-        global_min = valores_globais.min()
-        global_max = valores_globais.max()
-    else:
-        global_min, global_max = 0, 1
+    global_min = valores_globais.min() if not valores_globais.empty else 0
+    global_max = valores_globais.max() if not valores_globais.empty else 1
 
     taxa_base_ida = TAXAS_AEROPORTO.get(origem_ida, TAXA_PADRAO)
     taxa_base_volta = TAXAS_AEROPORTO.get(origem_volta, TAXA_PADRAO)
@@ -218,5 +292,4 @@ else:
                 f"VOLTA: {origem_volta} ➔ {destino_volta}", taxa_base_volta, is_pontos, global_min, global_max
             ), unsafe_allow_html=True)
             
-        # Linha divisória entre os meses
         dt.markdown("<br><hr style='border:1px solid #e2e8f0;'><br>", unsafe_allow_html=True)
