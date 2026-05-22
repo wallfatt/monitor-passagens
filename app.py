@@ -148,7 +148,6 @@ def gerar_html_calendario(df_mes, ano, mes, coluna_valor, titulo, taxa_base, is_
 
 # --- INÍCIO DA INTERFACE ---
 
-# Configurações do Cabeçalho Customizado
 TEXTO_EXIBIDO = "@Casaldaspassagens" 
 LINK_INSTAGRAM = "https://www.instagram.com/casaldaspassagens_?igsh=MThxZTl2NHVwbTl2ZQ%3D%3D"
 URL_FOTO_PERFIL = "https://drive.google.com/uc?export=download&id=1a_NhrKaI4PLBedx1T6gxHzq4eF57n2ke"
@@ -229,7 +228,9 @@ else:
     df_v_proc = df_v_proc[(df_v_proc['Numero voos'].between(slide_v_v[0], slide_v_v[1])) & (df_v_proc['Duracao_Minutos'].between(slide_t_v[0]*60, slide_t_v[1]*60))]
 
     meses = sorted(pd.concat([df_i_proc['Mês/Ano'], df_v_proc['Mês/Ano']]).dropna().unique(), key=lambda x: datetime.strptime(x, "%m/%Y"))
-    is_pts = modo == "Pontos"
+
+    # CORREÇÃO APLICADA AQUI (A definição da coluna de valor foi restaurada)
+    col_val, is_pts = ('Preco clube', True) if modo == "Pontos" else (('Custo Real Clube', False) if modo == "Reais (Clube)" else ('Custo Real Normal', False))
 
     # Escala Global
     glob = pd.concat([df_i_proc[col_val], df_v_proc[col_val]]).dropna()
