@@ -1,21 +1,17 @@
 import streamlit as st
 import pandas as pd
-import os
 import calendar
 
 # 1. Configuração da página
 st.set_page_config(page_title="Calendário Azul", layout="wide")
 st.title("📅 Calendário de Passagens - Azul")
 
-caminho_csv = "https://drive.google.com/file/d/1VFLoXan_R9NgwPrk_Qw5VZg1wrdtMraI"
+# Link do Google Drive convertido para modo de leitura direta (Download)
+caminho_csv = "https://drive.google.com/uc?export=download&id=1VFLoXan_R9NgwPrk_Qw5VZg1wrdtMraI"
 
 # --- DIAGNÓSTICO EM TEMPO REAL NA BARRA LATERAL ---
 st.sidebar.header("⚙️ Status do Arquivo")
-if os.path.exists(caminho_csv):
-    st.sidebar.success("✅ Arquivo carregado com sucesso!")
-else:
-    st.sidebar.error("❌ Arquivo NÃO encontrado.")
-    st.sidebar.info(f"Caminho:\n{caminho_csv}")
+st.sidebar.info("🌐 Lendo arquivo diretamente da nuvem (Google Drive)...")
 
 # --- CSS DO CALENDÁRIO ---
 st.markdown("""
@@ -34,39 +30,33 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Nova função de matemática (Multiplica por 1000 para corrigir a formatação do Excel)
 def limpar_preco(preco_val):
     if pd.isna(preco_val):
         return None
     preco_str = str(preco_val).strip()
     
-    # "Ind" captura a palavra Indisponível mesmo que o Excel tenha bugado o acento
     if "Ind" in preco_str or "Não" in preco_str:
         return None
     try:
-        # Pega "35.2" e transforma matematicamente em 35200
         preco_float = float(preco_str.replace(',', '.'))
         return int(preco_float * 1000)
     except:
         return None
 
+# Nova função adaptada para ler da internet sem procurar no disco local
 @st.cache_data(ttl=30)
 def carregar_dados():
-    if not os.path.exists(caminho_csv):
-        return None
     try:
-        # Mudamos o separador para VÍRGULA, conforme a nova planilha
         df = pd.read_csv(caminho_csv, sep=',', encoding='utf-8', on_bad_lines='skip')
         df.columns = df.columns.str.strip()
         return df
     except Exception as e:
-        st.error(f"Erro ao ler o CSV: {e}")
+        st.error(f"Erro ao ler o CSV da nuvem: {e}")
         return None
 
 df_bruto = carregar_dados()
 
 if df_bruto is not None:
-    # Procura a coluna de preço automaticamente (para ignorar o erro do "PreÃ§o")
     col_data = "Data Voo" if "Data Voo" in df_bruto.columns else None
     col_preco = [c for c in df_bruto.columns if "Pre" in c]
     col_preco = col_preco[0] if len(col_preco) > 0 else None
@@ -142,11 +132,9 @@ if df_bruto is not None:
                 
             st.markdown("---")
             st.subheader("📋 Lista Detalhada dos Voos Encontrados")
-            # Substitui a coluna "bugada" do Excel por um nome bonito na exibição da tabela
             df_exibicao = df_rota.drop(columns=['Data Formatada', 'Preco_Num']).rename(columns={col_preco: "Pontos (Mil)"})
             st.dataframe(df_exibicao, use_container_width=True)
         else:
             st.info("Nenhuma data encontrada para esta rota.")
     else:
         st.error("Colunas essenciais não encontradas. O site não conseguiu ler o Excel.")
-        st.write("Colunas detetadas:", df_bruto.columns.tolist())
