@@ -24,8 +24,12 @@ def carregar():
     try:
         r = requests.get(URL_DRIVE_CSV, headers={"User-Agent": "Mozilla/5.0"})
         df = pd.read_csv(StringIO(r.content.decode('utf-8', errors='ignore')))
-        df['Origem'], df['Destino'] = df['Origem'].str.upper(), df['Destino'].str.upper()
-        df['Data partida_dt'] = pd.to_datetime(df['Data partida'], format='%d/%m/%Y')
+        # Limpeza robusta: remove nulos antes de processar
+        df = df.dropna(subset=['Origem', 'Destino'])
+        df['Origem'] = df['Origem'].astype(str).str.strip().str.upper()
+        df['Destino'] = df['Destino'].astype(str).str.strip().str.upper()
+        df['Data partida_dt'] = pd.to_datetime(df['Data partida'], format='%d/%m/%Y', errors='coerce')
+        df = df.dropna(subset=['Data partida_dt'])
         df['Duracao_Minutos'] = df['Duracao'].apply(conv_minutos)
         return df
     except: return pd.DataFrame()
@@ -33,23 +37,27 @@ def carregar():
 # INTERFACE
 df = carregar()
 if df.empty:
-    dt.error("Erro ao carregar dados.")
+    dt.error("Erro ao carregar dados ou planilha vazia.")
 else:
     dt.sidebar.header("Filtros")
-    rota = dt.sidebar.selectbox("Rota:", sorted(list((df['Origem']+" -> "+df['Destino']).unique())))
+    # Blindagem aqui: usamos .dropna() e garantimos string antes do sorted
+    rotas = sorted(list((df['Origem'].astype(str) + " -> " + df['Destino'].astype(str)).unique()))
+    rota = dt.sidebar.selectbox("Rota:", rotas)
     orig, dest = rota.split(" -> ")
     modo = dt.sidebar.radio("Valores em:", ["Pontos", "Reais (Clube)", "Reais (Normal)"])
     milheiro = dt.sidebar.number_input("Milheiro (R$):", value=17.0)
 
+    # Cálculo de Custo
+    for d in [df]:
+        taxa = TAXAS.get(d['Origem'].iloc[0] if not d.empty else "", 50.0)
+        # Ajuste: cálculo baseado na data atual corretamente
+        data_hj = datetime.now()
+        d['Custo'] = ((d['Preco clube']/1000)*milheiro) + taxa + (49.9 if (d['Data partida_dt']-data_hj).dt.days < 90 else 0)
+        d['Valor_Exibir'] = d['Preco clube'] if modo=="Pontos" else (d['Custo'] if modo=="Reais (Clube)" else ((d['Preco normal']/1000)*milheiro)+taxa)
+
     # Filtragem
     df_i = df[(df['Origem']==orig) & (df['Destino']==dest)].copy()
     df_v = df[(df['Origem']==dest) & (df['Destino']==orig)].copy()
-    
-    # Cálculo
-    for d in [df_i, df_v]:
-        taxa = TAXAS.get(d['Origem'].iloc[0] if not d.empty else "", 50.0)
-        d['Custo'] = ((d['Preco clube']/1000)*milheiro) + taxa + (49.9 if (d['Data partida_dt']-datetime.now()).dt.days < 90 else 0)
-        d['Valor_Exibir'] = d['Preco clube'] if modo=="Pontos" else d['Custo']
 
     # Render
     c1, c2 = dt.columns(2)
@@ -61,8 +69,6 @@ else:
                 dt.write(f"### {m}")
                 df_m = data[data['Data partida_dt'].dt.to_period('M') == m]
                 dias = sorted(df_m['Data partida_dt'].dt.day.unique())
-                
-                # Grade de dias
                 cols_grid = dt.columns(7)
                 for i, d in enumerate(dias):
                     voos = df_m[df_m['Data partida_dt'].dt.day == d].sort_values('Valor_Exibir')
