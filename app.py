@@ -102,7 +102,6 @@ def gerar_html_calendario(df_mes, ano, mes, coluna_valor, titulo, taxa_base, is_
         html += f"<td style='padding:4px; border-radius: 3px;'>{d}</td>"
     html += "</tr>"
 
-    # Encontra o voo mais barato de cada dia
     df_dia = df_mes.groupby(df_mes['Data partida_dt'].dt.day)[coluna_valor].min().to_dict() if not df_mes.empty else {}
     df_voos_minimos = df_mes.sort_values(coluna_valor).groupby(df_mes['Data partida_dt'].dt.day).first() if not df_mes.empty else pd.DataFrame()
     
@@ -127,11 +126,10 @@ def gerar_html_calendario(df_mes, ano, mes, coluna_valor, titulo, taxa_base, is_
                     
                     text_val = f"{val/1000:.1f}k" if is_pontos else f"R${val:.0f}"
                     
-                    # Cria o Tooltip com os detalhes do voo
                     if day in df_voos_minimos.index:
                         voo = df_voos_minimos.loc[day]
-                        tipo = 'Direto' if voo['Numero voos'] == 1 else 'Conexão'
-                        tooltip = f"Saída: {voo['Hora partida']} | Chegada: {voo['Hora chegada']} | {tipo} | Duração: {voo['Duracao']}"
+                        # NOVO FORMATO DO TOOLTIP (Substitui 'Conexão' pelo número exato de voos)
+                        tooltip = f"Saída: {voo['Hora partida']} | Chegada: {voo['Hora chegada']} | Número de voos: {voo['Numero voos']} | Duração: {voo['Duracao']}"
                     else:
                         tooltip = ""
                         
@@ -176,7 +174,7 @@ else:
     dt.sidebar.subheader("✈️ Filtros Ida")
     v_min_i, v_max_i = int(df_i_total['Numero voos'].min() or 1), int(df_i_total['Numero voos'].max() or 1)
     slide_v_i = dt.sidebar.slider("Ida: Conexões", v_min_i, v_max_i, (v_min_i, v_max_i)) if v_min_i != v_max_i else (v_min_i, v_max_i)
-    t_min_i, t_max_i = round(df_i_total['Duracao_Minutos'].min()/60, 1), round(df_i_total['Duracao_Minutos'].max()/60, 1)
+    t_min_i, t_max_i = round(df_i_total['Duracao_Minutos'].min()/60, 1) if not df_i_total.empty else 0.0, round(df_i_total['Duracao_Minutos'].max()/60, 1) if not df_i_total.empty else 0.0
     slide_t_i = dt.sidebar.slider("Ida: Tempo (h)", t_min_i, t_max_i, (t_min_i, t_max_i), step=0.5)
 
     # Sliders Volta
@@ -184,7 +182,7 @@ else:
     dt.sidebar.subheader("🔄 Filtros Volta")
     v_min_v, v_max_v = int(df_v_total['Numero voos'].min() or 1), int(df_v_total['Numero voos'].max() or 1)
     slide_v_v = dt.sidebar.slider("Volta: Conexões", v_min_v, v_max_v, (v_min_v, v_max_v)) if v_min_v != v_max_v else (v_min_v, v_max_v)
-    t_min_v, t_max_v = round(df_v_total['Duracao_Minutos'].min()/60, 1), round(df_v_total['Duracao_Minutos'].max()/60, 1)
+    t_min_v, t_max_v = round(df_v_total['Duracao_Minutos'].min()/60, 1) if not df_v_total.empty else 0.0, round(df_v_total['Duracao_Minutos'].max()/60, 1) if not df_v_total.empty else 0.0
     slide_t_v = dt.sidebar.slider("Volta: Tempo (h)", t_min_v, t_max_v, (t_min_v, t_max_v), step=0.5)
 
     dt.sidebar.markdown("---")
