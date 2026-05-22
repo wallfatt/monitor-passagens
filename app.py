@@ -64,7 +64,8 @@ else:
     rota_selecionada = dt.sidebar.selectbox("Rota:", rotas_disponiveis)
     origem_sel, destino_sel = rota_selecionada.split(" -> ")
     
-    df_filtrado = df_voos[(df_voos['Origem'] ==強rigem_sel) & (df_voos['Destino'] == destino_sel)].copy()
+    # LINHA CORRIGIDA AQUI: Caractere intruso removido com sucesso!
+    df_filtrado = df_voos[(df_voos['Origem'] == origem_sel) & (df_voos['Destino'] == destino_sel)].copy()
     
     meses_disponiveis = sorted(df_filtrado['Mês/Ano'].dropna().unique(), key=lambda x: datetime.strptime(x, "%m/%Y"))
     mes_selecionado = dt.sidebar.selectbox("Mês de Partida:", meses_disponiveis)
@@ -134,12 +135,10 @@ else:
                 
                 # Gera as cores dinamicamente: Verde para o mais barato, passando por Amarelo, até Vermelho
                 if peso_proporcao < 0.5:
-                    # Do Verde Puro (187, 247, 208) até o Amarelo
                     r = int(187 + (68 * (peso_proporcao * 2)))
                     g = int(247)
                     b = int(208 - (100 * (peso_proporcao * 2)))
                 else:
-                    # Do Amarelo até o Vermelho Suave (254, 202, 202)
                     r = int(255)
                     g = int(247 - (45 * ((peso_proporcao - 0.5) * 2)))
                     b = int(108 + (94 * ((peso_proporcao - 0.5) * 2)))
