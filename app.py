@@ -8,7 +8,7 @@ dt.set_page_config(page_title="Radar de Voos - Azul Pontos", layout="wide", page
 
 # LINK DO SEU GOOGLE DRIVE (Convertido automaticamente para formato de exportação de dados)
 ID_PLANILHA = "1kW2FY4lAxRcp2ZSmBVfeuUWgqGZprLE4"
-URL_DRIVE_CSV = f"https://docs.google.com/spreadsheets/d/{ID_PLANILHA}/export?format=csv"
+URL_DRIVE_CSV = f"https://docs.google.com/spreadsheets/d/{ID_PLANILHA}"
 
 @dt.cache_data(ttl=300)  # Atualiza o cache do painel a cada 5 minutos
 def carregar_dados():
