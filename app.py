@@ -16,7 +16,6 @@ st.sidebar.info("🌐 A ler dados da nuvem...")
 TAXAS_EMBARQUE = {
     "NAT": 48.26,
     "UDI": 40.96
-    # Para incluir novos aeroportos, basta adicionar aqui (ex: "GRU": 39.50)
 }
 
 # --- CSS DO CALENDÁRIO ---
@@ -49,7 +48,6 @@ def limpar_preco(preco_val):
         return None
 
 def formatar_valor_final(valor, modo):
-    """Formata o número final para a exibição no ecrã."""
     if pd.isna(valor): return "Esgotado"
     if modo == "Pontos":
         return f"{int(valor):,} Pts".replace(",", ".")
@@ -72,7 +70,6 @@ def criar_dicionario_tooltips(df_rota, modo):
     return voos_dict
 
 def formatar_tabela_exibicao(df_filtrado, col_preco, modo):
-    """Ajusta as colunas finais exibidas na tabela de inspeção."""
     df_exibicao = df_filtrado.drop(columns=['Data Formatada', 'Preco_Num']).copy()
     
     if modo == "Reais":
@@ -145,7 +142,6 @@ if df_bruto is not None:
         df_processado['Data Formatada'] = pd.to_datetime(df_processado[col_data], format='%d/%m/%Y', errors='coerce')
         df_processado['Preco_Num'] = df_processado[col_preco].apply(limpar_preco)
         
-        # Filtros de Rota
         st.sidebar.markdown("---")
         st.sidebar.header("🔎 Selecione a Ida")
         origens = sorted(df_processado["Origem"].dropna().unique())
@@ -154,7 +150,6 @@ if df_bruto is not None:
         destinos = sorted(df_processado[df_processado["Origem"] == origem_sel]["Destino"].dropna().unique())
         destino_sel = st.sidebar.selectbox("Destino (Ida):", destinos)
         
-        # Filtros de Moeda
         st.sidebar.markdown("---")
         st.sidebar.header("💰 Moeda de Exibição")
         modo_exibicao = st.sidebar.radio("Mostrar custos em:", ["Pontos", "Reais"])
@@ -165,7 +160,8 @@ if df_bruto is not None:
             st.sidebar.caption("*Inclui a taxa de embarque do aeroporto e a taxa de emissão da Azul (R$ 49,90) para voos com menos de 90 dias.*")
         
         # CÁLCULO DE TAXAS E VALOR FINAL
-        hoje = pd.Timestamp(datetime.now().normalize())
+        # Correção aplicada nesta linha para usar o relógio do Pandas
+        hoje = pd.Timestamp.now().normalize()
         
         def calcular_valor_referencia(row):
             if pd.isna(row['Preco_Num']):
@@ -174,7 +170,6 @@ if df_bruto is not None:
             if modo_exibicao == "Pontos":
                 return row['Preco_Num']
             
-            # Se for Reais:
             custo_pontos = (row['Preco_Num'] / 1000) * valor_milheiro
             taxa_emb = TAXAS_EMBARQUE.get(row['Origem'], 0.0)
             
@@ -185,7 +180,6 @@ if df_bruto is not None:
             
         df_processado['Valor_Referencia'] = df_processado.apply(calcular_valor_referencia, axis=1)
         
-        # Separação Ida e Volta
         df_ida = df_processado[(df_processado["Origem"] == origem_sel) & (df_processado["Destino"] == destino_sel)].copy()
         df_volta = df_processado[(df_processado["Origem"] == destino_sel) & (df_processado["Destino"] == origem_sel)].copy()
         
@@ -199,7 +193,6 @@ if df_bruto is not None:
             with col_ida: st.subheader(f"🛫 IDA: {origem_sel} ➔ {destino_sel}")
             with col_volta: st.subheader(f"🛬 VOLTA: {destino_sel} ➔ {origem_sel}")
             
-            # Limites Ida baseados no Valor de Referência
             if not df_ida.empty:
                 precos_ida = df_ida.groupby('Data Formatada')['Valor_Referencia'].min()
                 min_ida = precos_ida.min()
@@ -209,7 +202,6 @@ if df_bruto is not None:
             else:
                 precos_ida = None; min_ida = barato_ida = medio_ida = 0
                 
-            # Limites Volta baseados no Valor de Referência
             if not df_volta.empty:
                 precos_volta = df_volta.groupby('Data Formatada')['Valor_Referencia'].min()
                 min_volta = precos_volta.min()
@@ -239,7 +231,6 @@ if df_bruto is not None:
                 
                 st.markdown("<hr style='margin: 10px 0; opacity: 0.2;'>", unsafe_allow_html=True)
                 
-            # --- SECÇÃO DE INSPEÇÃO DETALHADA ---
             st.markdown("---")
             st.subheader("🔍 Inspeção Diária de Horários")
             
