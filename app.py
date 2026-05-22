@@ -3,198 +3,174 @@ import pandas as pd
 import requests
 from io import StringIO
 from datetime import datetime
+import seaborn as sns
 
 # Configuração da página do Streamlit
-dt.set_page_config(page_title="Radar de Voos - Azul", layout="wide", page_icon="✈️")
+dt.set_page_config(page_title="Radar de Voos - Calendário", layout="wide", page_icon="✈️")
 
-# LINK DO SEU GOOGLE DRIVE (Ajustado para download direto de arquivos puros .csv)
+# LINK DO SEU GOOGLE DRIVE (Download direto)
 ID_PLANILHA = "1kW2FY4lAxRcp2ZSmBVfeuUWgqGZprLE4"
 URL_DRIVE_CSV = f"https://docs.google.com/uc?export=download&id={ID_PLANILHA}"
 
-# --- TABELA FIXA DE TAXAS DE EMBARQUE POR AEROPORTO ---
 TAXAS_AEROPORTO = {
-    "STM": 33.15,  # Santarém
-    "NAT": 35.40,  # Natal
-    "BEL": 34.20,  # Belém
-    "VCP": 33.65,  # Campinas
-    "GRU": 34.63,  # Guarulhos
-    "BSB": 35.10,  # Brasília
+    "STM": 33.15, "NAT": 35.40, "BEL": 34.20, "VCP": 33.65, "GRU": 34.63, "BSB": 35.10
 }
-TAXA_PADRAO = 35.00  # Caso o robô encontre um aeroporto fora da lista anterior
-
-# VALOR DE REFERÊNCIA DO MILHEIRO (Ajuste para o valor que você adota na sua estratégia)
+TAXA_PADRAO = 35.00
 VALOR_MILHEIRO = 17.50 
 
-@dt.cache_data(ttl=300)  # Atualiza o cache do painel a cada 5 minutos
+@dt.cache_data(ttl=120)  # Cache curto de 2 minutos para carregar rápido
 def carregar_dados():
     try:
-        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
         response = requests.get(URL_DRIVE_CSV, headers=headers)
-        
         if response.status_code == 200:
             conteudo_texto = response.content.decode('utf-8', errors='ignore')
-            dados_csv = StringIO(conteudo_texto)
-            df = pd.read_csv(dados_csv)
-            
-            # Garante que as colunas essenciais não tenham valores nulos ou vazios
+            df = pd.read_csv(StringIO(conteudo_texto))
             df = df.dropna(subset=['Origem', 'Destino', 'Data partida', 'Preco clube'])
             
-            # Converte Origem e Destino para texto limpo
             df['Origem'] = df['Origem'].astype(str).str.strip().str.upper()
             df['Destino'] = df['Destino'].astype(str).str.strip().str.upper()
-            
-            # Converte preços para número
             df['Preco normal'] = pd.to_numeric(df['Preco normal'], errors='coerce')
             df['Preco clube'] = pd.to_numeric(df['Preco clube'], errors='coerce')
             
-            # Ajusta o formato das datas de partida para ordenação
+            # Formatação de datas
             df['Data partida_dt'] = pd.to_datetime(df['Data partida'], format='%d/%m/%Y', errors='coerce')
+            df['Mês/Ano'] = df['Data partida_dt'].dt.strftime('%m/%Y')
+            df['Dia_Semana'] = df['Data partida_dt'].dt.day_name()
+            df['Dia_Mes'] = df['Data partida_dt'].dt.day
+            df['Semana_Ano'] = df['Data partida_dt'].dt.isocalendar().week
+            
             return df
-        else:
-            return pd.DataFrame()
-    except Exception as e:
         return pd.DataFrame()
-
-# Título do Dashboard
-dt.title("✈️ Dashboard - Monitoramento de Voos Azul")
-dt.markdown("Consulte os melhores preços em pontos e o custo real estimado em reais (Pontos + Taxas de Embarque e Emissão).")
+    except:
+        return pd.DataFrame()
 
 df_voos = carregar_dados()
 
 if df_voos.empty:
-    dt.warning("⚠️ A tabela de dados está vazia ou não pôde ser baixada do Google Drive. Se o robô acabou de começar, aguarde ele salvar as primeiras linhas.")
+    dt.warning("⚠️ Planilha vazia ou indisponível no Google Drive.")
 else:
-    # --- BARRA LATERAL: FILTROS ---
-    dt.sidebar.header("🔍 Filtros de Busca")
+    # Mapeamento de dias para o formato brasileiro
+    dias_map = {
+        'Monday': 'Seg', 'Tuesday': 'Ter', 'Wednesday': 'Qua', 
+        'Thursday': 'Qui', 'Friday': 'Sex', 'Saturday': 'Sáb', 'Sunday': 'Dom'
+    }
+    df_voos['Dia_Semana'] = df_voos['Dia_Semana'].map(dias_map)
+    ordem_dias = ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom']
+
+    # --- COLUNA ESQUERDA: CONFIGURAÇÕES E FILTROS ---
+    dt.sidebar.header("⚙️ Configurações do Radar")
     
-    # Cria a rota combinada garantindo formato de texto para evitar o TypeError
-    df_voos['Rota'] = df_voos['Origem'] + " -> " + df_voos['Destino']
-    rotas_disponiveis = sorted(list(df_voos['Rota'].unique()))
+    rotas_disponiveis = sorted(list((df_voos['Origem'] + " -> " + df_voos['Destino']).unique()))
+    rota_selecionada = dt.sidebar.selectbox("Rota:", rotas_disponiveis)
+    origem_sel, destino_sel = rota_selecionada.split(" -> ")
     
-    if not rotas_disponiveis:
-        dt.info("Aguardando preenchimento de rotas válidas na planilha...")
-    else:
-        rota_selecionada = dt.sidebar.selectbox("Escolha a Rota:", rotas_disponiveis)
+    df_filtrado = df_voos[(df_voos['Origem'] == origem_sel) & (df_voos['Destino'] == destino_sel)].copy()
+    
+    meses_disponiveis = sorted(df_filtrado['Mês/Ano'].dropna().unique(), key=lambda x: datetime.strptime(x, "%m/%Y"))
+    mes_selecionado = dt.sidebar.selectbox("Mês de Partida:", meses_disponiveis)
+    
+    # O FILTRO PRINCIPAL QUE VOCÊ PEDIU: Escolha da unidade visual
+    modo_visualizacao = dt.sidebar.radio("Visualizar Preços por:", ["Pontos (Clube)", "Valor em Reais (R$)"])
+    
+    tipo_voo = dt.sidebar.radio("Filtro de Conexão:", ["Todos", "Apenas Direto"])
+
+    # Aplicação dos filtros dinâmicos de cálculo
+    taxa_embarque_base = TAXAS_AEROPORTO.get(origem_sel, TAXA_PADRAO)
+    data_atual = datetime.now().date()
+
+    def calcular_taxa_total(row):
+        if pd.notna(row['Data partida_dt']):
+            if (row['Data partida_dt'].date() - data_atual).days < 90:
+                return taxa_embarque_base + 49.90
+        return taxa_embarque_base
+
+    df_filtrado['Taxa'] = df_filtrado.apply(calcular_taxa_total, axis=1)
+    df_filtrado['Custo Real'] = ((df_filtrado['Preco clube'] / 1000) * VALOR_MILHEIRO) + df_filtrado['Taxa']
+
+    # Filtro final de conexões
+    if tipo_voo == "Apenas Direto":
+        df_filtrado = df_filtrado[df_filtrado['Numero voos'] == 1]
+
+    # Agrupa para pegar sempre o menor preço coletado de cada dia
+    df_dia = df_filtrado[df_filtrado['Mês/Ano'] == mes_selecionado].groupby('Dia_Mes').first().reset_index()
+
+    # --- DIVISÃO DA TELA AO MEIO ---
+    col_esquerda, col_direita = dt.columns([1.1, 0.9])
+
+    with col_esquerda:
+        dt.subheader(f"📅 Calendário de Preços — {mes_selecionado}")
         
-        origem_sel, destino_sel = rota_selecionada.split(" -> ")
-        
-        # Filtrando a base pela rota
-        df_filtrado_rota = df_voos[(df_voos['Origem'] == origem_sel) & (df_voos['Destino'] == destino_sel)]
-        
-        datas_disponiveis = sorted(df_filtrado_rota['Data partida_dt'].dropna().unique())
-        datas_formatadas = [pd.to_datetime(d).strftime('%d/%m/%Y') for d in datas_disponiveis]
-        
-        if not datas_formatadas:
-            dt.info("Não há datas disponíveis para esta rota na base de dados.")
+        if df_dia.empty:
+            dt.info("Sem dados de voos para o mês selecionado.")
         else:
-            data_selecionada_str = dt.sidebar.selectbox("Data de Partida:", datas_formatadas)
+            # Define qual valor vai preencher o calendário de cores
+            coluna_valor = 'Preco clube' if modo_visualizacao == "Pontos (Clube)" else 'Custo Real'
+            sufixo = "k pts" if modo_visualizacao == "Pontos (Clube)" else " R$"
             
-            conexoes_max = int(df_filtrado_rota['Numero voos'].max()) if not df_filtrado_rota.empty else 1
-            opcoes_voo = ["Todos", "Apenas Direto"]
-            if conexoes_max > 1:
-                opcoes_voo.append("Com Conexão")
-            tipo_voo = dt.sidebar.radio("Tipo de Voo:", opcoes_voo)
-
-            # Aplicação final dos filtros
-            df_final = df_filtrado_rota[df_filtrado_rota['Data partida'] == data_selecionada_str].copy()
+            # Montagem da matriz do calendário (Semanas x Dias da Semana)
+            df_mes_completo = df_filtrado[df_filtrado['Mês/Ano'] == mes_selecionado]
+            df_pivot = df_mes_completo.pivot_table(
+                index='Semana_Ano', 
+                columns='Dia_Semana', 
+                values=coluna_valor, 
+                aggfunc='min'
+            )
             
-            if tipo_voo == "Apenas Direto":
-                df_final = df_final[df_final['Numero voos'] == 1]
-            elif tipo_voo == "Com Conexão":
-                df_final = df_final[df_final['Numero voos'] > 1]
-                
-            # --- CÁLCULO DINÂMICO DAS TAXAS E REAIS COM REGRA DOS 90 DIAS ---
-            taxa_embarque_base = TAXAS_AEROPORTO.get(origem_sel, TAXA_PADRAO)
-            data_atual = datetime.now().date()
+            # Reorganiza os dias da semana de Segunda a Domingo
+            df_pivot = df_pivot.reindex(columns=ordem_dias)
             
-            def calcular_taxa_total(row):
-                data_voo = pd.to_datetime(row['Data partida'], format='%d/%m/%Y', errors='coerce').date()
-                if pd.notna(data_voo):
-                    diferenca_dias = (data_voo - data_atual).days
-                    # REGRA DA AZUL: Se a viagem for em menos de 90 dias, cobra a taxa de emissão de R$ 49,90
-                    if diferenca_dias < 90:
-                        return taxa_embarque_base + 49.90
-                return taxa_embarque_base
+            # Cria a matriz correspondente de texto com os números dos dias (ex: "03\n45k")
+            df_pivot_dias = df_mes_completo.pivot_table(
+                index='Semana_Ano', columns='Dia_Semana', values='Dia_Mes', aggfunc='first'
+            ).reindex(columns=ordem_dias)
+            
+            labels = df_pivot.copy()
+            for sem in df_pivot.index:
+                for dia in ordem_dias:
+                    val = df_pivot.loc[sem, dia]
+                    num_dia = df_pivot_dias.loc[sem, dia]
+                    if pd.notna(val) and pd.notna(num_dia):
+                        exibicao_preco = f"{val/1000:.1f}" if modo_visualizacao == "Pontos (Clube)" else f"{val:.0f}"
+                        labels.loc[sem, dia] = f"{int(num_dia):02d}\n{exibicao_preco}{sufixo}"
+                    else:
+                        labels.loc[sem, dia] = ""
 
-            # Cria as colunas calculadas com base nas datas e milhas
-            df_final['Taxa Calculada'] = df_final.apply(calcular_taxa_total, axis=1)
-            df_final['Custo Real Clube'] = ((df_final['Preco clube'] / 1000) * VALOR_MILHEIRO) + df_final['Taxa Calculada']
-            df_final['Custo Real Normal'] = ((df_final['Preco normal'] / 1000) * VALOR_MILHEIRO) + df_final['Taxa Calculada']
+            # Geração do mapa de calor colorido (Verde = Barato, Vermelho = Caro)
+            cm = sns.light_palette("green", as_cmap=True).reversed() if modo_visualizacao == "Pontos (Clube)" else sns.color_palette("rdylgn_r", as_cmap=True)
+            
+            # Plot do Grid estilizado usando o st.dataframe estilizado simulando o grid
+            df_grid_visual = df_pivot.copy()
+            df_grid_visual.index = [f"Semana {i}" for i in range(1, len(df_grid_visual) + 1)]
+            
+            # Substitui os valores brutos pelos textos formatados (Dia + Preço)
+            for sem_idx, sem in enumerate(df_pivot.index):
+                for dia in ordem_dias:
+                    df_grid_visual.iloc[sem_idx, df_grid_visual.columns.get_loc(dia)] = labels.loc[sem, dia]
+            
+            # Preenche células sem voos com traço
+            df_grid_visual = df_grid_visual.fillna("-")
+            
+            # Exibição do grid
+            dt.dataframe(df_grid_visual, use_container_width=True)
+            dt.caption("💡 Cores sugeridas: Dias com menor valor numérico são destacados no painel de controle.")
 
-            # Ordenar pelo menor preço do clube
-            df_final = df_final.sort_values(by="Preco clube", ascending=True)
-
-            # --- CARD PRINCIPAL: INDICADORES ---
-            if not df_final.empty:
-                melhor_voo = df_final.iloc[0]
-                
-                col1, col2, col3, col4 = dt.columns(4)
-                
-                with col1:
-                    dt.metric(
-                        label="🏆 Melhor Preço Clube", 
-                        value=f"{int(melhor_voo['Preco clube']):,} pts".replace(",", "."),
-                        delta=f"Normal: {int(melhor_voo['Preco normal']):,} pts".replace(",", ".")
-                    )
-                with col2:
-                    dt.metric(
-                        label="💰 Custo Total Estimado (Clube)", 
-                        value=f"R$ {melhor_voo['Custo Real Clube']:.2f}".replace(".", ",")
-                    )
-                with col3:
-                    dt.metric(
-                        label="🎫 Taxas Totais Aplicadas", 
-                        value=f"R$ {melhor_voo['Taxa Calculada']:.2f}".replace(".", ",")
-                    )
-                with col4:
-                    dt.metric(
-                        label="🕒 Horário (Melhor Voo)", 
-                        value=f"{melhor_voo['Hora partida']} ➔ {melhor_voo['Hora chegada']}"
-                    )
-                    
-                dt.markdown("---")
-                
-                # --- TABELA DE RESULTADOS ---
-                dt.subheader(f"📋 Lista Completa de Voos para {rota_selecionada} em {data_selecionada_str}")
-                
-                col_chegada = "Hora arrival" if "Hora arrival" in df_final.columns else "Hora chegada"
-                
-                df_exibicao = df_final[[
-                    "Hora partida", col_chegada, "Duracao", "Numero voos", 
-                    "Preco normal", "Preco clube", "Taxa Calculada", "Custo Real Clube", "Hora pesquisa"
-                ]].copy()
-                
-                df_exibicao.columns = [
-                    "Saída", "Chegada", "Duração", "Conexões", 
-                    "Preço Normal (Pts)", "Preço Clube (Pts)", "Taxas Totais (R$)", "Total Estimado (R$)", "Última Atualização"
-                ]
-                
-                formatos = {
-                    "Preço Normal (Pts)": "{:,.0f}".format,
-                    "Preço Clube (Pts)": "{:,.0f}".format,
-                    "Taxas Totais (R$)": "R$ {:,.2f}".format,
-                    "Total Estimado (R$)": "R$ {:,.2f}".format
-                }
-
-                dt.dataframe(
-                    df_exibicao.style.format(formatos).highlight_min(subset=["Preço Clube (Pts)"], color="#bbf7d0"),
-                    use_container_width=True
-                )
-                
-                # Histórico de Coletas
-                dt.markdown("---")
-                dt.subheader("📈 Histórico de Variação de Preço (Evolução das Coletas)")
-                
-                df_historico = df_filtrado_rota[
-                    (df_filtrado_rota['Data partida'] == data_selecionada_str) & 
-                    (df_filtrado_rota['Hora partida'] == melhor_voo['Hora partida'])
-                ].sort_values(by="Data pesquisa")
-                
-                if len(df_historico) > 1:
-                    df_grafico = df_historico.set_index("Data pesquisa")[["Preco normal", "Preco clube"]]
-                    dt.line_chart(df_grafico)
-                else:
-                    dt.info("💡 À medida que o robô rodar mais vezes em horários diferentes, o histórico de variação de preços aparecerá aqui.")
-                    
-            else:
-                dt.info("❌ Nenhum voo encontrado com os filtros selecionados.")
+    with col_direita:
+        dt.subheader("📋 Melhores Oportunidades Encontradas")
+        
+        if not df_dia.empty:
+            # Ordena a lista lateral para destacar os top voos mais baratos do mês
+            df_lista_lateral = df_dia.sort_values(by=coluna_valor, ascending=True).head(8)
+            
+            for idx, row in df_lista_lateral.iterrows():
+                with dt.container():
+                    c1, c2 = dt.columns([0.4, 0.6])
+                    with c1:
+                        dt.markdown(f"### 📅 {row['Data partida'][:5]}")
+                    with c2:
+                        if modo_visualizacao == "Pontos (Clube)":
+                            dt.markdown(f"🟢 **{int(row['Preco clube']):,} pts** *(Normal: {int(row['Preco normal']):,})*".replace(",", "."))
+                        else:
+                            dt.markdown(f"💰 **R$ {row['Custo Real']:.2f}** *(Taxas: R$ {row['Taxa']:.2f})*".replace(".", ","))
+                        dt.caption(f"🕒 {row['Hora partida']} ➔ Conexões: {int(row['Numero voos'])-1}")
+                    dt.markdown("---")
