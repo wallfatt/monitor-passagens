@@ -39,7 +39,6 @@ def converter_duracao_para_minutos(dur_str):
     if pd.isna(dur_str) or not isinstance(dur_str, str): return 0
     dur_str = dur_str.strip().lower()
     
-    # NOVA LÓGICA: Se o formato for HH:MM (ex: 9:25)
     if ':' in dur_str:
         partes = dur_str.split(':')
         if len(partes) >= 2:
@@ -48,7 +47,6 @@ def converter_duracao_para_minutos(dur_str):
             except:
                 pass
                 
-    # Lógica antiga para 8h 15m
     dias, horas, minutos = 0, 0, 0
     match_d = re.search(r'(\d+)\s*d', dur_str)
     match_h = re.search(r'(\d+)\s*h', dur_str)
@@ -109,7 +107,6 @@ def carregar_dados():
         df['SUBVOO'] = df.get('SUBVOO', pd.Series(['Nao']*len(df))).astype(str).str.strip()
         
         df['Duracao_Minutos'] = df['DURACAO'].apply(converter_duracao_para_minutos)
-        # Parseia as datas garantindo que o primeiro número é o dia
         df['Data partida_dt'] = pd.to_datetime(df['DATA PARTIDA'], dayfirst=True, errors='coerce')
         df['Mês/Ano'] = df['Data partida_dt'].dt.strftime('%m/%Y')
         
@@ -162,11 +159,24 @@ def gerar_html_calendario(df_mes, ano, mes, coluna_valor, titulo, taxa_base, is_
                 r, g, b = (int(187 + (68 * (peso * 2))), 247, int(208 - (100 * (peso * 2)))) if peso < 0.5 else (255, int(247 - (45 * ((peso - 0.5) * 2))), int(108 + (94 * ((peso - 0.5) * 2))))
                 text_val = f"{val/1000:.1f}k" if is_pontos else f"R${val:.0f}"
                 
+                # --- NOVO TOOLTIP DETALHADO ---
                 voo = df_voos_minimos.loc[day]
-                tooltip = f"Saída: {voo['HORA PARTIDA']} | Chegada: {voo['HORA CHEGADA']}"
-                if str(voo.get('SUBVOO', 'Nao')).lower().startswith('sim'): 
-                    tooltip += f" | ⚠️ SKIPIAG: {voo['SUBVOO']}"
-                tooltip += f" | Duração: {voo['DURACAO']}"
+                orig = str(voo.get('ORIGEM', ''))
+                dest = str(voo.get('DESTINO', ''))
+                
+                # Formatação dos preços e taxas
+                p_clube = f"{voo['PRECO CLUBE']:,.0f}".replace(",", ".") if pd.notna(voo['PRECO CLUBE']) else "-"
+                p_normal = f"{voo['PRECO NORMAL']:,.0f}".replace(",", ".") if pd.notna(voo['PRECO NORMAL']) else "-"
+                tx = f"R${voo['Taxa']:.2f}".replace(".", ",")
+                
+                # Lógica do Skiplagging formatado
+                subvoo = str(voo.get('SUBVOO', 'Nao')).strip()
+                if subvoo.lower() in ['nao', 'não', 'nan', '']:
+                    skip_str = "Não"
+                else:
+                    skip_str = subvoo  # Exibirá "Sim (FFF-GGG)"
+                
+                tooltip = f"Saída: {voo['HORA PARTIDA']} ({orig}) | Chegada: {voo['HORA CHEGADA']} ({dest}) | Duração: {voo['DURACAO']} | Preço clube: {p_clube} | Preço normal: {p_normal} | Tx embarque: {tx} | Skiplagging: {skip_str}"
                 
                 html += f"<td title='{tooltip}' style='background-color:rgb({r},{g},{b}); padding:8px 2px; border-radius:5px; border: 1px solid #e2e8f0; cursor: help;'><div style='font-size:14px; font-weight:bold; color:#0f172a;'>{day}</div><div style='font-size:11px; font-weight:800; color:#1e293b;'>{text_val}</div></td>"
             else: html += f"<td style='background-color:#f8fafc; padding:8px 2px; border-radius:5px; border: 1px dashed #cbd5e1;'><div style='font-size:14px; color:#94a3b8;'>{day}</div><div style='font-size:11px; color:#cbd5e1;'>-</div></td>"
@@ -217,7 +227,9 @@ else:
     dt.sidebar.markdown("---")
     modo = dt.sidebar.radio("Mostrar valores em:", ["Pontos", "Reais (Clube)", "Reais (Normal)"])
     milheiro = dt.sidebar.number_input("Valor do Milheiro (R$):", value=17.00, step=0.50, format="%.2f")
-    usar_skiplagging = dt.sidebar.checkbox("Ativar Skiplagging (Buscar Subtrechos)", value=False)
+    
+    # Checkbox de Skiplagging (agora iniciando como True)
+    usar_skiplagging = dt.sidebar.checkbox("Ativar Skiplagging (Buscar Subtrechos)", value=True)
     
     df_i_total = df_voos[(df_voos['ORIGEM_LOC'] == orig_ida) & (df_voos['DESTINO_LOC'] == dest_ida)]
     if orig_ida in LOCALIDADES: df_i_total = df_i_total[df_i_total['ORIGEM'].isin(aeros_ida)]
@@ -232,7 +244,6 @@ else:
         df_i_proc = df_i_proc[~df_i_proc['SUBVOO'].str.lower().str.startswith('sim')]
         df_v_proc = df_v_proc[~df_v_proc['SUBVOO'].str.lower().str.startswith('sim')]
 
-    # Lógica de renderização segura (Sliders usando Math.floor e Math.ceil)
     dt.sidebar.markdown("---")
     dt.sidebar.subheader("✈️ Filtros de Tempo/Conexões")
     
@@ -240,7 +251,7 @@ else:
         v_min_i, v_max_i = int(df_i_proc['NUMERO VOOS'].min()), int(df_i_proc['NUMERO VOOS'].max())
         t_min_i = float(math.floor(df_i_proc['Duracao_Minutos'].min() / 60))
         t_max_i = float(math.ceil(df_i_proc['Duracao_Minutos'].max() / 60))
-        if t_min_i == t_max_i: t_max_i += 1.0 # Garante que o slider funcione se os voos tiverem a mesma duração
+        if t_min_i == t_max_i: t_max_i += 1.0
     else:
         v_min_i, v_max_i, t_min_i, t_max_i = 1, 1, 0.0, 1.0
 
