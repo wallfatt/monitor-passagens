@@ -13,7 +13,7 @@ import math
 # ==========================================
 dt.set_page_config(page_title="Radar de Voos - Calendários Compactos", layout="wide", page_icon="✈️")
 
-# NOVO LINK DO GOOGLE DRIVE
+# LINK DO GOOGLE DRIVE
 ID_PLANILHA = "16zImsvHaEvcWJg4eCIrNy4o-NZJ0fZ7L"
 URL_DRIVE_CSV = f"https://docs.google.com/uc?export=download&id={ID_PLANILHA}"
 
@@ -25,10 +25,10 @@ LOCALIDADES = {
 # Dicionário inverso para facilitar a busca (ex: "GRU" -> "SAO")
 MAPA_INVERSO = {aero: loc for loc, aeroportos in LOCALIDADES.items() for aero in aeroportos}
 
-# TAXAS FIXAS POR AEROPORTO ATUALIZADAS
+# TAXAS FIXAS POR AEROPORTO ATUALIZADAS CONFORME ÚLTIMOS DADOS
 TAXAS_AEROPORTO = {
     "STM": 36.67, "NAT": 48.26, "BEL": 54.45, "VCP": 31.94, "GRU": 33.64, "BSB": 32.87,
-    "CGH": 62.14, "GIG": 34.11, "SDU": 62.62, "RRJ": 37.83, "CNF": 33.56  
+    "CGH": 62.14, "GIG": 34.11, "SDU": 62.62, "RRJ": 37.83, "CNF": 33.56
 }
 TAXA_PADRAO = 50.00
 
@@ -126,7 +126,6 @@ def processar_custos(df_voos_filtrado, valor_milheiro):
 
     data_atual = datetime.now().date()
     
-    # NOVA LÓGICA: Calcula a taxa baseada no aeroporto ESPECÍFICO (linha a linha)
     def calcular_taxa(row):
         base = TAXAS_AEROPORTO.get(row['ORIGEM'], TAXA_PADRAO)
         d = row['Data partida_dt']
@@ -142,7 +141,6 @@ def processar_custos(df_voos_filtrado, valor_milheiro):
 def gerar_html_calendario(df_mes, ano, mes, coluna_valor, titulo, is_pontos, val_min, val_max):
     meses_pt = {1: 'Janeiro', 2: 'Fevereiro', 3: 'Março', 4: 'Abril', 5: 'Maio', 6: 'Junho', 7: 'Julho', 8: 'Agosto', 9: 'Setembro', 10: 'Outubro', 11: 'Novembro', 12: 'Dezembro'}
     
-    # NOVA LÓGICA: Identifica os aeroportos presentes neste calendário para formatar o texto das taxas
     if not df_mes.empty:
         aeros_unicos = sorted(df_mes['ORIGEM'].unique())
         taxas_str_list = [f"{aero} (R$ {TAXAS_AEROPORTO.get(aero, TAXA_PADRAO):.2f})" for aero in aeros_unicos]
@@ -154,8 +152,8 @@ def gerar_html_calendario(df_mes, ano, mes, coluna_valor, titulo, is_pontos, val
     html += f"<div style='text-align: center; color: #4b5563; font-size: 11px; margin-bottom: 3px;'>Taxas de Embarque: {taxa_str}</div>"
     html += f"<div style='text-align: center; color: #1e293b; font-size: 14px; margin-bottom: 8px; font-weight: 600;'>{meses_pt[mes]} {ano}</div>"
     
-    html += "<table style='width:100%; border-collapse: separate; border-spacing: 3px; text-align:center; font-family: sans-serif;'>"
-    html += "<tr style='background-color:#1e293b; color:white; font-size: 11px; font-weight:bold;'>"
+    html += "<table style='width:100%; border-collapse: separate; border-spacing: 3px; text-align:center; font-family: sans-serif CONTAINER;'>"
+    html += "<tr style='background-color:#1e293b; color:white; font-size: 11px; font-weight:bold ROW;'>"
     for d in ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom']: html += f"<td style='padding:4px; border-radius: 3px;'>{d}</td>"
     html += "</tr>"
     
@@ -174,7 +172,6 @@ def gerar_html_calendario(df_mes, ano, mes, coluna_valor, titulo, is_pontos, val
                 r, g, b = (int(187 + (68 * (peso * 2))), 247, int(208 - (100 * (peso * 2)))) if peso < 0.5 else (255, int(247 - (45 * ((peso - 0.5) * 2))), int(108 + (94 * ((peso - 0.5) * 2))))
                 text_val = f"{val/1000:.1f}k" if is_pontos else f"R${val:.0f}"
                 
-                # --- TOOLTIP DETALHADO E PERFEITO ---
                 voo = df_voos_minimos.loc[day]
                 orig = str(voo.get('ORIGEM', ''))
                 dest = str(voo.get('DESTINO', ''))
@@ -184,10 +181,14 @@ def gerar_html_calendario(df_mes, ano, mes, coluna_valor, titulo, is_pontos, val
                 tx = f"R${voo['Taxa']:.2f}".replace(".", ",")
                 
                 subvoo = str(voo.get('SUBVOO', 'Nao')).strip()
-                if subvoo.lower() in ['nao', 'não', 'nan', '']: skip_str = "Não"
-                else: skip_str = subvoo  # Ex: "Sim (FFF-GGG)"
+                skip_str = "Não" if subvoo.lower() in ['nao', 'não', 'nan', ''] else subvoo
                 
-                tooltip = f"Saída: {voo['HORA PARTIDA']} ({orig}) | Chegada: {voo['HORA CHEGADA']} ({dest}) | Duração: {voo['DURACAO']} | Preço clube: {p_clube} | Preço normal: {p_normal} | Tx embarque: {tx} | Skiplagging: {skip_str}"
+                # Coleta da data e hora da pesquisa do banco de dados
+                dt_pesquisa = str(voo.get('DATA PESQUISA', '-'))
+                hr_pesquisa = str(voo.get('HORA PESQUISA', '-'))
+                
+                # TOOLTIP ATUALIZADO COM DATA E HORA DA PESQUISA
+                tooltip = f"Saída: {voo['HORA PARTIDA']} ({orig}) | Chegada: {voo['HORA CHEGADA']} ({dest}) | Duração: {voo['DURACAO']} | Preço clube: {p_clube} | Preço normal: {p_normal} | Tx embarque: {tx} | Skiplagging: {skip_str} | Pesquisa: {dt_pesquisa} {hr_pesquisa}"
                 
                 html += f"<td title='{tooltip}' style='background-color:rgb({r},{g},{b}); padding:8px 2px; border-radius:5px; border: 1px solid #e2e8f0; cursor: help;'><div style='font-size:14px; font-weight:bold; color:#0f172a;'>{day}</div><div style='font-size:11px; font-weight:800; color:#1e293b;'>{text_val}</div></td>"
             else: html += f"<td style='background-color:#f8fafc; padding:8px 2px; border-radius:5px; border: 1px dashed #cbd5e1;'><div style='font-size:14px; color:#94a3b8;'>{day}</div><div style='font-size:11px; color:#cbd5e1;'>-</div></td>"
@@ -238,8 +239,6 @@ else:
     dt.sidebar.markdown("---")
     modo = dt.sidebar.radio("Mostrar valores em:", ["Pontos", "Reais (Clube)", "Reais (Normal)"])
     milheiro = dt.sidebar.number_input("Valor do Milheiro (R$):", value=17.00, step=0.50, format="%.2f")
-    
-    # Skiplagging marcado por padrão
     usar_skiplagging = dt.sidebar.checkbox("Ativar Skiplagging (Buscar Subtrechos)", value=True)
     
     df_i_total = df_voos[(df_voos['ORIGEM_LOC'] == orig_ida) & (df_voos['DESTINO_LOC'] == dest_ida)]
@@ -248,7 +247,6 @@ else:
     df_v_total = df_voos[(df_voos['ORIGEM_LOC'] == orig_volta) & (df_voos['DESTINO_LOC'] == dest_volta)]
     if orig_volta in LOCALIDADES: df_v_total = df_v_total[df_v_total['ORIGEM'].isin(aeros_volta)]
     
-    # Agora processar custos não exige a origem (ele pega dinamicamente da linha)
     df_i_proc = processar_custos(df_i_total, milheiro)
     df_v_proc = processar_custos(df_v_total, milheiro)
     
