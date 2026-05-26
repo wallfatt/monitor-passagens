@@ -28,7 +28,7 @@ MAPA_INVERSO = {aero: loc for loc, aeroportos in LOCALIDADES.items() for aero in
 # TAXAS FIXAS POR AEROPORTO ATUALIZADAS CONFORME ÚLTIMOS DADOS
 TAXAS_AEROPORTO = {
     "STM": 36.67, "NAT": 48.26, "BEL": 54.45, "VCP": 31.94, "GRU": 33.64, "BSB": 32.87,
-    "CGH": 62.14, "GIG": 34.11, "SDU": 62.62, "RRJ": 37.83, "CNF": 33.56
+    "CGH": 62.14, "GIG": 34.11, "SDU": 62.62, "RRJ": 37.83, "CNF": 33.56, "REC": 60.54
 }
 TAXA_PADRAO = 50.00
 
@@ -110,10 +110,75 @@ def carregar_dados():
         df['Data partida_dt'] = pd.to_datetime(df['DATA PARTIDA'], dayfirst=True, errors='coerce')
         df['Mês/Ano'] = df['Data partida_dt'].dt.strftime('%m/%Y')
         
+        # Datetimes precisos para cálculo de tempo entre voos
+        df['Datetime Partida'] = pd.to_datetime(df['DATA PARTIDA'] + ' ' + df['HORA PARTIDA'], dayfirst=True, errors='coerce')
+        df['Datetime Chegada'] = pd.to_datetime(df['DATA CHEGADA'] + ' ' + df['HORA CHEGADA'], dayfirst=True, errors='coerce')
+        
         return df
     except Exception as e: 
         dt.error(f"Erro inesperado no processamento da planilha: {e}")
         return pd.DataFrame()
+
+def gerar_multitrechos(df, aeros_origem, aeros_dest, max_con_hours):
+    # 1. Filtra voos que saem da origem de interesse
+    df_leg1 = df[df['ORIGEM'].isin(aeros_origem)].copy()
+    # 2. Filtra voos que chegam no destino final
+    df_leg2 = df[df['DESTINO'].isin(aeros_dest)].copy()
+    
+    # 3. Cruze os dados (Destino do Voo 1 = Origem do Voo 2)
+    merged = pd.merge(df_leg1, df_leg2, left_on='DESTINO', right_on='ORIGEM', suffixes=('_1', '_2'))
+    if merged.empty: return pd.DataFrame()
+    
+    # 4. Filtro de tempo da conexão (entre 20 minutos e max_con_hours)
+    layover = merged['Datetime Partida_2'] - merged['Datetime Chegada_1']
+    merged['Layover_Mins'] = layover.dt.total_seconds() / 60
+    valid = merged[(merged['Layover_Mins'] >= 20) & (merged['Layover_Mins'] <= max_con_hours * 60)].copy()
+    if valid.empty: return pd.DataFrame()
+    
+    # 5. Montagem do Voo Sintetizado
+    synth = pd.DataFrame()
+    synth['ORIGEM'] = valid['ORIGEM_1']
+    synth['DESTINO'] = valid['DESTINO_2']
+    synth['ORIGEM_LOC'] = valid['ORIGEM_LOC_1']
+    synth['DESTINO_LOC'] = valid['DESTINO_LOC_2']
+    synth['DATA PARTIDA'] = valid['DATA PARTIDA_1']
+    synth['HORA PARTIDA'] = valid['HORA PARTIDA_1']
+    synth['DATA CHEGADA'] = valid['DATA CHEGADA_2']
+    synth['HORA CHEGADA'] = valid['HORA CHEGADA_2']
+    synth['Data partida_dt'] = valid['Data partida_dt_1']
+    synth['Mês/Ano'] = valid['Mês/Ano_1']
+    
+    synth['PRECO NORMAL'] = valid['PRECO NORMAL_1'] + valid['PRECO NORMAL_2']
+    synth['PRECO CLUBE'] = valid['PRECO CLUBE_1'] + valid['PRECO CLUBE_2']
+    synth['NUMERO VOOS'] = valid['NUMERO VOOS_1'] + valid['NUMERO VOOS_2']
+    
+    dur_total = valid['Datetime Chegada_2'] - valid['Datetime Partida_1']
+    synth['Duracao_Minutos'] = dur_total.dt.total_seconds() / 60
+    
+    def format_dur(mins):
+        if pd.isna(mins): return ""
+        h, m = int(mins // 60), int(mins % 60)
+        return f"{h}h {m}m"
+        
+    synth['DURACAO'] = synth['Duracao_Minutos'].apply(format_dur)
+    synth['SUBVOO'] = 'Multitrecho via ' + valid['DESTINO_1']
+    
+    synth['DATA PESQUISA'] = valid['DATA PESQUISA_1']
+    synth['HORA PESQUISA'] = valid['HORA PESQUISA_1']
+    
+    # Adicionando o campo de taxa dupla
+    data_atual = datetime.now().date()
+    def calc_multi_tax(row):
+        taxa1 = TAXAS_AEROPORTO.get(row['ORIGEM_1'], TAXA_PADRAO)
+        taxa2 = TAXAS_AEROPORTO.get(row['ORIGEM_2'], TAXA_PADRAO)
+        d1 = row['Datetime Partida_1']
+        if pd.notna(d1) and (d1.date() - data_atual).days < 90: taxa1 += 49.90
+        d2 = row['Datetime Partida_2']
+        if pd.notna(d2) and (d2.date() - data_atual).days < 90: taxa2 += 49.90
+        return taxa1 + taxa2
+        
+    synth['MULTITRECHO_TAXA'] = valid.apply(calc_multi_tax, axis=1)
+    return synth
 
 def processar_custos(df_voos_filtrado, valor_milheiro):
     df_temp = df_voos_filtrado.copy()
@@ -127,6 +192,10 @@ def processar_custos(df_voos_filtrado, valor_milheiro):
     data_atual = datetime.now().date()
     
     def calcular_taxa(row):
+        # Verifica se já possui a taxa dupla do multitrecho calculada
+        if 'MULTITRECHO_TAXA' in row and pd.notna(row['MULTITRECHO_TAXA']):
+            return row['MULTITRECHO_TAXA']
+            
         base = TAXAS_AEROPORTO.get(row['ORIGEM'], TAXA_PADRAO)
         d = row['Data partida_dt']
         if pd.notna(d) and (d.date() - data_atual).days < 90:
@@ -181,16 +250,21 @@ def gerar_html_calendario(df_mes, ano, mes, coluna_valor, titulo, is_pontos, val
                 tx = f"R${voo['Taxa']:.2f}".replace(".", ",")
                 
                 subvoo = str(voo.get('SUBVOO', 'Nao')).strip()
-                skip_str = "Não" if subvoo.lower() in ['nao', 'não', 'nan', ''] else subvoo
+                is_multi = subvoo.startswith('Multitrecho')
                 
-                # Coleta da data e hora da pesquisa do banco de dados
+                # Regra de cor para multitrechos (vermelho)
+                cor_texto = "red" if is_multi else "#1e293b"
+                
                 dt_pesquisa = str(voo.get('DATA PESQUISA', '-'))
                 hr_pesquisa = str(voo.get('HORA PESQUISA', '-'))
                 
-                # TOOLTIP ATUALIZADO COM DATA E HORA DA PESQUISA
-                tooltip = f"Saída: {voo['HORA PARTIDA']} ({orig}) | Chegada: {voo['HORA CHEGADA']} ({dest}) | Duração: {voo['DURACAO']} | Preço clube: {p_clube} | Preço normal: {p_normal} | Tx embarque: {tx} | Skiplagging: {skip_str} | Pesquisa: {dt_pesquisa} {hr_pesquisa}"
+                if is_multi:
+                    tooltip = f"⚠️ MULTITRECHO: {subvoo} | Saída: {voo['HORA PARTIDA']} ({orig}) | Chegada: {voo['HORA CHEGADA']} ({dest}) | Duração: {voo['DURACAO']} | Preço clube: {p_clube} | Preço normal: {p_normal} | Tx embarque dupla: {tx} | Pesquisa: {dt_pesquisa} {hr_pesquisa}"
+                else:
+                    skip_str = "Não" if subvoo.lower() in ['nao', 'não', 'nan', ''] else subvoo
+                    tooltip = f"Saída: {voo['HORA PARTIDA']} ({orig}) | Chegada: {voo['HORA CHEGADA']} ({dest}) | Duração: {voo['DURACAO']} | Preço clube: {p_clube} | Preço normal: {p_normal} | Tx embarque: {tx} | Skiplagging: {skip_str} | Pesquisa: {dt_pesquisa} {hr_pesquisa}"
                 
-                html += f"<td title='{tooltip}' style='background-color:rgb({r},{g},{b}); padding:8px 2px; border-radius:5px; border: 1px solid #e2e8f0; cursor: help;'><div style='font-size:14px; font-weight:bold; color:#0f172a;'>{day}</div><div style='font-size:11px; font-weight:800; color:#1e293b;'>{text_val}</div></td>"
+                html += f"<td title='{tooltip}' style='background-color:rgb({r},{g},{b}); padding:8px 2px; border-radius:5px; border: 1px solid #e2e8f0; cursor: help;'><div style='font-size:14px; font-weight:bold; color:#0f172a;'>{day}</div><div style='font-size:11px; font-weight:800; color:{cor_texto};'>{text_val}</div></td>"
             else: html += f"<td style='background-color:#f8fafc; padding:8px 2px; border-radius:5px; border: 1px dashed #cbd5e1;'><div style='font-size:14px; color:#94a3b8;'>{day}</div><div style='font-size:11px; color:#cbd5e1;'>-</div></td>"
         html += "</tr>"
     return html + "</table>"
@@ -239,21 +313,47 @@ else:
     dt.sidebar.markdown("---")
     modo = dt.sidebar.radio("Mostrar valores em:", ["Pontos", "Reais (Clube)", "Reais (Normal)"])
     milheiro = dt.sidebar.number_input("Valor do Milheiro (R$):", value=17.00, step=0.50, format="%.2f")
+    
     usar_skiplagging = dt.sidebar.checkbox("Ativar Skiplagging (Buscar Subtrechos)", value=True)
+    usar_multitrecho = dt.sidebar.checkbox("Ativar Multitrecho (Busca Combinada)", value=True)
     
-    df_i_total = df_voos[(df_voos['ORIGEM_LOC'] == orig_ida) & (df_voos['DESTINO_LOC'] == dest_ida)]
-    if orig_ida in LOCALIDADES: df_i_total = df_i_total[df_i_total['ORIGEM'].isin(aeros_ida)]
+    if usar_multitrecho:
+        max_con_hours = dt.sidebar.number_input("Tempo máximo de conexão Multitrecho (hrs)", min_value=1, max_value=20, value=3)
+    else:
+        max_con_hours = 0
     
-    df_v_total = df_voos[(df_voos['ORIGEM_LOC'] == orig_volta) & (df_voos['DESTINO_LOC'] == dest_volta)]
-    if orig_volta in LOCALIDADES: df_v_total = df_v_total[df_v_total['ORIGEM'].isin(aeros_volta)]
+    # Prepara a base respeitando o filtro de Skiplagging
+    df_base = df_voos.copy()
+    if not usar_skiplagging:
+        df_base = df_base[~df_base['SUBVOO'].str.lower().str.startswith('sim')]
+    
+    # ------------------ IDA ------------------
+    df_i_normal = df_base[(df_base['ORIGEM_LOC'] == orig_ida) & (df_base['DESTINO_LOC'] == dest_ida)]
+    if orig_ida in LOCALIDADES: df_i_normal = df_i_normal[df_i_normal['ORIGEM'].isin(aeros_ida)]
+    if dest_ida in LOCALIDADES: df_i_normal = df_i_normal[df_i_normal['DESTINO'].isin(LOCALIDADES[dest_ida])]
+    
+    if usar_multitrecho:
+        dest_ida_list = LOCALIDADES.get(dest_ida, [dest_ida])
+        df_i_multi = gerar_multitrechos(df_base, aeros_ida, dest_ida_list, max_con_hours)
+        df_i_total = pd.concat([df_i_normal, df_i_multi], ignore_index=True) if not df_i_multi.empty else df_i_normal
+    else:
+        df_i_total = df_i_normal
+
+    # ------------------ VOLTA ------------------
+    df_v_normal = df_base[(df_base['ORIGEM_LOC'] == orig_volta) & (df_base['DESTINO_LOC'] == dest_volta)]
+    if orig_volta in LOCALIDADES: df_v_normal = df_v_normal[df_v_normal['ORIGEM'].isin(aeros_volta)]
+    if dest_volta in LOCALIDADES: df_v_normal = df_v_normal[df_v_normal['DESTINO'].isin(LOCALIDADES[dest_volta])]
+    
+    if usar_multitrecho:
+        dest_volta_list = LOCALIDADES.get(dest_volta, [dest_volta])
+        df_v_multi = gerar_multitrechos(df_base, aeros_volta, dest_volta_list, max_con_hours)
+        df_v_total = pd.concat([df_v_normal, df_v_multi], ignore_index=True) if not df_v_multi.empty else df_v_normal
+    else:
+        df_v_total = df_v_normal
     
     df_i_proc = processar_custos(df_i_total, milheiro)
     df_v_proc = processar_custos(df_v_total, milheiro)
     
-    if not usar_skiplagging:
-        df_i_proc = df_i_proc[~df_i_proc['SUBVOO'].str.lower().str.startswith('sim')]
-        df_v_proc = df_v_proc[~df_v_proc['SUBVOO'].str.lower().str.startswith('sim')]
-
     dt.sidebar.markdown("---")
     dt.sidebar.subheader("✈️ Filtros de Tempo/Conexões")
     
