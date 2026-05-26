@@ -27,7 +27,7 @@ MAPA_INVERSO = {aero: loc for loc, aeroportos in LOCALIDADES.items() for aero in
 # TAXAS FIXAS POR AEROPORTO ATUALIZADAS
 TAXAS_AEROPORTO = {
     "STM": 36.67, "NAT": 48.26, "BEL": 54.45, "VCP": 31.94, "GRU": 33.64, "BSB": 32.87,
-    "CGH": 33.64, "GIG": 33.64, "SDU": 33.64 # Adicionando estimativas para os novos aeroportos
+    "CGH": 33.64, "GIG": 33.64, "SDU": 33.64 
 }
 TAXA_PADRAO = 50.00
 
@@ -64,7 +64,6 @@ def carregar_dados():
             
         conteudo_str = response.content.decode('utf-8', errors='ignore')
         
-        # Tentativa robusta de leitura
         try:
             df = pd.read_csv(StringIO(conteudo_str))
             if 'ORIGEM' not in [c.strip().upper() for c in df.columns]:
@@ -73,6 +72,7 @@ def carregar_dados():
             df = pd.read_csv(StringIO(conteudo_str), sep='\t')
             
         if df.empty:
+            dt.warning("O arquivo foi baixado, mas não contém dados.")
             return pd.DataFrame()
 
         df.columns = df.columns.str.strip().str.upper()
@@ -80,6 +80,7 @@ def carregar_dados():
         colunas_essenciais = ['ORIGEM', 'DESTINO', 'DATA PARTIDA']
         for col in colunas_essenciais:
             if col not in df.columns:
+                dt.error(f"Coluna essencial '{col}' não encontrada no arquivo CSV.")
                 return pd.DataFrame()
 
         df = df.dropna(subset=colunas_essenciais)
@@ -101,16 +102,24 @@ def carregar_dados():
         
         return df
     except Exception as e: 
+        dt.error(f"Erro inesperado no processamento da planilha: {e}")
         return pd.DataFrame()
 
 def processar_custos(df_voos_filtrado, origem, valor_milheiro):
-    if df_voos_filtrado.empty: return df_voos_filtrado
     df_temp = df_voos_filtrado.copy()
+    
+    # GARANTIA: Cria as colunas mesmo que o df esteja vazio para evitar KeyError
+    if df_temp.empty:
+        df_temp['Taxa'] = pd.Series(dtype=float)
+        df_temp['Custo Real Clube'] = pd.Series(dtype=float)
+        df_temp['Custo Real Normal'] = pd.Series(dtype=float)
+        return df_temp
+
     taxa_embarque_base = TAXAS_AEROPORTO.get(origem, TAXA_PADRAO)
     data_atual = datetime.now().date()
     
     df_temp['Taxa'] = df_temp['Data partida_dt'].apply(
-        lambda d: taxa_embarque_base + 49.90 if (d.date() - data_atual).days < 90 else taxa_embarque_base
+        lambda d: taxa_embarque_base + 49.90 if pd.notna(d) and (d.date() - data_atual).days < 90 else taxa_embarque_base
     )
     df_temp['Custo Real Clube'] = ((df_temp['PRECO CLUBE'] / 1000) * valor_milheiro) + df_temp['Taxa']
     df_temp['Custo Real Normal'] = ((df_temp['PRECO NORMAL'] / 1000) * valor_milheiro) + df_temp['Taxa']
@@ -211,11 +220,9 @@ else:
         df_i_proc = df_i_proc[~df_i_proc['SUBVOO'].str.lower().str.startswith('sim')]
         df_v_proc = df_v_proc[~df_v_proc['SUBVOO'].str.lower().str.startswith('sim')]
 
-    # Lógica de renderização segura para Sliders
     dt.sidebar.markdown("---")
     dt.sidebar.subheader("✈️ Filtros de Tempo/Conexões")
     
-    # PROTEÇÃO PARA OS SLIDERS DE IDA
     if not df_i_proc.empty:
         v_min_i, v_max_i = int(df_i_proc['NUMERO VOOS'].min()), int(df_i_proc['NUMERO VOOS'].max())
         t_min_i, t_max_i = round(df_i_proc['Duracao_Minutos'].min()/60, 1), round(df_i_proc['Duracao_Minutos'].max()/60, 1)
@@ -225,7 +232,6 @@ else:
     slide_v_i = dt.sidebar.slider("Ida: Conexões", v_min_i, v_max_i, (v_min_i, v_max_i)) if v_min_i < v_max_i else (v_min_i, v_max_i)
     slide_t_i = dt.sidebar.slider("Ida: Tempo (h)", t_min_i, t_max_i, (t_min_i, t_max_i), step=0.5) if t_min_i < t_max_i else (t_min_i, t_max_i)
     
-    # PROTEÇÃO PARA OS SLIDERS DE VOLTA
     if not df_v_proc.empty:
         v_min_v, v_max_v = int(df_v_proc['NUMERO VOOS'].min()), int(df_v_proc['NUMERO VOOS'].max())
         t_min_v, t_max_v = round(df_v_proc['Duracao_Minutos'].min()/60, 1), round(df_v_proc['Duracao_Minutos'].max()/60, 1)
@@ -235,26 +241,8 @@ else:
     slide_v_v = dt.sidebar.slider("Volta: Conexões", v_min_v, v_max_v, (v_min_v, v_max_v)) if v_min_v < v_max_v else (v_min_v, v_max_v)
     slide_t_v = dt.sidebar.slider("Volta: Tempo (h)", t_min_v, t_max_v, (t_min_v, t_max_v), step=0.5) if t_min_v < t_max_v else (t_min_v, t_max_v)
 
-    # Aplicação final do filtro
     if not df_i_proc.empty:
         df_i_proc = df_i_proc[(df_i_proc['NUMERO VOOS'].between(slide_v_i[0], slide_v_i[1])) & (df_i_proc['Duracao_Minutos'].between(slide_t_i[0]*60, slide_t_i[1]*60))]
     
     if not df_v_proc.empty:
-        df_v_proc = df_v_proc[(df_v_proc['NUMERO VOOS'].between(slide_v_v[0], slide_v_v[1])) & (df_v_proc['Duracao_Minutos'].between(slide_t_v[0]*60, slide_t_v[1]*60))]
-
-    col_val = 'PRECO CLUBE' if modo == "Pontos" else ('Custo Real Clube' if modo == "Reais (Clube)" else 'Custo Real Normal')
-    is_pts = (modo == "Pontos")
-    
-    meses = sorted(pd.concat([df_i_proc['Mês/Ano'], df_v_proc['Mês/Ano']]).dropna().unique(), key=lambda x: datetime.strptime(x, "%m/%Y"))
-    g_min, g_max = (pd.concat([df_i_proc[col_val], df_v_proc[col_val]]).min(), pd.concat([df_i_proc[col_val], df_v_proc[col_val]]).max()) if not pd.concat([df_i_proc, df_v_proc]).empty else (0, 1)
-
-    for m in meses:
-        m_int, a_int = map(int, m.split("/"))
-        c1, c2 = dt.columns(2)
-        with c1: 
-            if not df_i_proc[df_i_proc['Mês/Ano']==m].empty:
-                dt.markdown(gerar_html_calendario(df_i_proc[df_i_proc['Mês/Ano']==m], a_int, m_int, col_val, f"IDA: {orig_ida}➔{dest_ida}", TAXAS_AEROPORTO.get(orig_ida, TAXA_PADRAO), is_pts, g_min, g_max), unsafe_allow_html=True)
-        with c2: 
-            if not df_v_proc[df_v_proc['Mês/Ano']==m].empty:
-                dt.markdown(gerar_html_calendario(df_v_proc[df_v_proc['Mês/Ano']==m], a_int, m_int, col_val, f"VOLTA: {orig_volta}➔{dest_volta}", TAXAS_AEROPORTO.get(orig_volta, TAXA_PADRAO), is_pts, g_min, g_max), unsafe_allow_html=True)
-        dt.markdown("<hr style='margin:10px 0; border:0.5px solid #eee;'>", unsafe_allow_html=True)
+        df_v_
