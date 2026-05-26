@@ -6,6 +6,7 @@ import base64
 from datetime import datetime
 import calendar
 import re
+import math
 
 # ==========================================
 # CONFIGURAÇÕES INICIAIS
@@ -36,7 +37,18 @@ TAXA_PADRAO = 50.00
 # ==========================================
 def converter_duracao_para_minutos(dur_str):
     if pd.isna(dur_str) or not isinstance(dur_str, str): return 0
-    dur_str = dur_str.lower()
+    dur_str = dur_str.strip().lower()
+    
+    # NOVA LÓGICA: Se o formato for HH:MM (ex: 9:25)
+    if ':' in dur_str:
+        partes = dur_str.split(':')
+        if len(partes) >= 2:
+            try:
+                return (int(partes[0]) * 60) + int(partes[1])
+            except:
+                pass
+                
+    # Lógica antiga para 8h 15m
     dias, horas, minutos = 0, 0, 0
     match_d = re.search(r'(\d+)\s*d', dur_str)
     match_h = re.search(r'(\d+)\s*h', dur_str)
@@ -97,7 +109,8 @@ def carregar_dados():
         df['SUBVOO'] = df.get('SUBVOO', pd.Series(['Nao']*len(df))).astype(str).str.strip()
         
         df['Duracao_Minutos'] = df['DURACAO'].apply(converter_duracao_para_minutos)
-        df['Data partida_dt'] = pd.to_datetime(df['DATA PARTIDA'], format='%d/%m/%Y', errors='coerce')
+        # Parseia as datas garantindo que o primeiro número é o dia
+        df['Data partida_dt'] = pd.to_datetime(df['DATA PARTIDA'], dayfirst=True, errors='coerce')
         df['Mês/Ano'] = df['Data partida_dt'].dt.strftime('%m/%Y')
         
         return df
@@ -108,7 +121,6 @@ def carregar_dados():
 def processar_custos(df_voos_filtrado, origem, valor_milheiro):
     df_temp = df_voos_filtrado.copy()
     
-    # GARANTIA: Cria as colunas mesmo que o df esteja vazio para evitar KeyError
     if df_temp.empty:
         df_temp['Taxa'] = pd.Series(dtype=float)
         df_temp['Custo Real Clube'] = pd.Series(dtype=float)
@@ -220,23 +232,28 @@ else:
         df_i_proc = df_i_proc[~df_i_proc['SUBVOO'].str.lower().str.startswith('sim')]
         df_v_proc = df_v_proc[~df_v_proc['SUBVOO'].str.lower().str.startswith('sim')]
 
+    # Lógica de renderização segura (Sliders usando Math.floor e Math.ceil)
     dt.sidebar.markdown("---")
     dt.sidebar.subheader("✈️ Filtros de Tempo/Conexões")
     
     if not df_i_proc.empty:
         v_min_i, v_max_i = int(df_i_proc['NUMERO VOOS'].min()), int(df_i_proc['NUMERO VOOS'].max())
-        t_min_i, t_max_i = round(df_i_proc['Duracao_Minutos'].min()/60, 1), round(df_i_proc['Duracao_Minutos'].max()/60, 1)
+        t_min_i = float(math.floor(df_i_proc['Duracao_Minutos'].min() / 60))
+        t_max_i = float(math.ceil(df_i_proc['Duracao_Minutos'].max() / 60))
+        if t_min_i == t_max_i: t_max_i += 1.0 # Garante que o slider funcione se os voos tiverem a mesma duração
     else:
-        v_min_i, v_max_i, t_min_i, t_max_i = 1, 1, 0.0, 0.0
+        v_min_i, v_max_i, t_min_i, t_max_i = 1, 1, 0.0, 1.0
 
     slide_v_i = dt.sidebar.slider("Ida: Conexões", v_min_i, v_max_i, (v_min_i, v_max_i)) if v_min_i < v_max_i else (v_min_i, v_max_i)
     slide_t_i = dt.sidebar.slider("Ida: Tempo (h)", t_min_i, t_max_i, (t_min_i, t_max_i), step=0.5) if t_min_i < t_max_i else (t_min_i, t_max_i)
     
     if not df_v_proc.empty:
         v_min_v, v_max_v = int(df_v_proc['NUMERO VOOS'].min()), int(df_v_proc['NUMERO VOOS'].max())
-        t_min_v, t_max_v = round(df_v_proc['Duracao_Minutos'].min()/60, 1), round(df_v_proc['Duracao_Minutos'].max()/60, 1)
+        t_min_v = float(math.floor(df_v_proc['Duracao_Minutos'].min() / 60))
+        t_max_v = float(math.ceil(df_v_proc['Duracao_Minutos'].max() / 60))
+        if t_min_v == t_max_v: t_max_v += 1.0
     else:
-        v_min_v, v_max_v, t_min_v, t_max_v = 1, 1, 0.0, 0.0
+        v_min_v, v_max_v, t_min_v, t_max_v = 1, 1, 0.0, 1.0
 
     slide_v_v = dt.sidebar.slider("Volta: Conexões", v_min_v, v_max_v, (v_min_v, v_max_v)) if v_min_v < v_max_v else (v_min_v, v_max_v)
     slide_t_v = dt.sidebar.slider("Volta: Tempo (h)", t_min_v, t_max_v, (t_min_v, t_max_v), step=0.5) if t_min_v < t_max_v else (t_min_v, t_max_v)
@@ -245,4 +262,25 @@ else:
         df_i_proc = df_i_proc[(df_i_proc['NUMERO VOOS'].between(slide_v_i[0], slide_v_i[1])) & (df_i_proc['Duracao_Minutos'].between(slide_t_i[0]*60, slide_t_i[1]*60))]
     
     if not df_v_proc.empty:
-        df_v_
+        df_v_proc = df_v_proc[(df_v_proc['NUMERO VOOS'].between(slide_v_v[0], slide_v_v[1])) & (df_v_proc['Duracao_Minutos'].between(slide_t_v[0]*60, slide_t_v[1]*60))]
+
+    col_val = 'PRECO CLUBE' if modo == "Pontos" else ('Custo Real Clube' if modo == "Reais (Clube)" else 'Custo Real Normal')
+    is_pts = (modo == "Pontos")
+    
+    meses = sorted(pd.concat([df_i_proc['Mês/Ano'], df_v_proc['Mês/Ano']]).dropna().unique(), key=lambda x: datetime.strptime(x, "%m/%Y"))
+    
+    val_ida = df_i_proc[col_val] if not df_i_proc.empty and col_val in df_i_proc.columns else pd.Series(dtype=float)
+    val_volta = df_v_proc[col_val] if not df_v_proc.empty and col_val in df_v_proc.columns else pd.Series(dtype=float)
+    glob = pd.concat([val_ida, val_volta]).dropna()
+    g_min, g_max = (glob.min(), glob.max()) if not glob.empty else (0, 1)
+
+    for m in meses:
+        m_int, a_int = map(int, m.split("/"))
+        c1, c2 = dt.columns(2)
+        with c1: 
+            if not df_i_proc[df_i_proc['Mês/Ano']==m].empty:
+                dt.markdown(gerar_html_calendario(df_i_proc[df_i_proc['Mês/Ano']==m], a_int, m_int, col_val, f"IDA: {orig_ida}➔{dest_ida}", TAXAS_AEROPORTO.get(orig_ida, TAXA_PADRAO), is_pts, g_min, g_max), unsafe_allow_html=True)
+        with c2: 
+            if not df_v_proc[df_v_proc['Mês/Ano']==m].empty:
+                dt.markdown(gerar_html_calendario(df_v_proc[df_v_proc['Mês/Ano']==m], a_int, m_int, col_val, f"VOLTA: {orig_volta}➔{dest_volta}", TAXAS_AEROPORTO.get(orig_volta, TAXA_PADRAO), is_pts, g_min, g_max), unsafe_allow_html=True)
+        dt.markdown("<hr style='margin:10px 0; border:0.5px solid #eee;'>", unsafe_allow_html=True)
