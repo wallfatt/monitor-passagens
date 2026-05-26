@@ -388,8 +388,14 @@ else:
     col_val = 'PRECO CLUBE' if modo == "Pontos" else ('Custo Real Clube' if modo == "Reais (Clube)" else 'Custo Real Normal')
     is_pts = (modo == "Pontos")
     
-    meses = sorted(pd.concat([df_i_proc['Mês/Ano'], df_v_proc['Mês/Ano']]).dropna().unique(), key=lambda x: datetime.strptime(x, "%m/%Y"))
+    # Extrai os meses disponíveis
+    mes_i = df_i_proc['Mês/Ano'] if not df_i_proc.empty and 'Mês/Ano' in df_i_proc.columns else pd.Series(dtype=str)
+    mes_v = df_v_proc['Mês/Ano'] if not df_v_proc.empty and 'Mês/Ano' in df_v_proc.columns else pd.Series(dtype=str)
+    meses = sorted(pd.concat([mes_i, mes_v]).dropna().unique(), key=lambda x: datetime.strptime(x, "%m/%Y"))
     
+    # ==========================================
+    # CORREÇÃO: Extração Segura de valores min e max
+    # ==========================================
     val_ida = df_i_proc[col_val] if not df_i_proc.empty and col_val in df_i_proc.columns else pd.Series(dtype=float)
     val_volta = df_v_proc[col_val] if not df_v_proc.empty and col_val in df_v_proc.columns else pd.Series(dtype=float)
     glob = pd.concat([val_ida, val_volta]).dropna()
@@ -399,9 +405,9 @@ else:
         m_int, a_int = map(int, m.split("/"))
         c1, c2 = dt.columns(2)
         with c1: 
-            if not df_i_proc[df_i_proc['Mês/Ano']==m].empty:
+            if not df_i_proc.empty and not df_i_proc[df_i_proc['Mês/Ano']==m].empty:
                 dt.markdown(gerar_html_calendario(df_i_proc[df_i_proc['Mês/Ano']==m], a_int, m_int, col_val, f"IDA: {orig_ida}➔{dest_ida}", is_pts, g_min, g_max), unsafe_allow_html=True)
         with c2: 
-            if not df_v_proc[df_v_proc['Mês/Ano']==m].empty:
+            if not df_v_proc.empty and not df_v_proc[df_v_proc['Mês/Ano']==m].empty:
                 dt.markdown(gerar_html_calendario(df_v_proc[df_v_proc['Mês/Ano']==m], a_int, m_int, col_val, f"VOLTA: {orig_volta}➔{dest_volta}", is_pts, g_min, g_max), unsafe_allow_html=True)
         dt.markdown("<hr style='margin:10px 0; border:0.5px solid #eee;'>", unsafe_allow_html=True)
