@@ -24,7 +24,7 @@ LOCALIDADES = {
 }
 MAPA_INVERSO = {aero: loc for loc, aeroportos in LOCALIDADES.items() for aero in aeroportos}
 
-# TAXAS FIXAS POR AEROPORTO ATUALIZADAS CONFORME ÚLTIMOS DADOS
+# TAXAS FIXAS POR AEROPORTO ATUALIZADAS
 TAXAS_AEROPORTO = {
     "STM": 36.67, "NAT": 48.26, "BEL": 54.45, "VCP": 31.94, "GRU": 33.64, "BSB": 32.87,
     "CGH": 62.14, "GIG": 34.11, "SDU": 62.62, "RRJ": 37.83, "CNF": 33.56, "REC": 60.54
@@ -32,18 +32,19 @@ TAXAS_AEROPORTO = {
 TAXA_PADRAO = 50.00
 
 # ==========================================
-# CSS PARA O EFEITO PISCANTE
+# CSS PARA O EFEITO PISCANTE TURBINADO
 # ==========================================
 dt.markdown("""
 <style>
 @keyframes piscar-promocao {
-    0% { opacity: 1; transform: scale(1); }
-    50% { opacity: 0.6; transform: scale(0.96); }
-    100% { opacity: 1; transform: scale(1); }
+    0% { box-shadow: inset 0 0 0px #22c55e, 0 0 5px rgba(34, 197, 94, 0.2); }
+    100% { box-shadow: inset 0 0 20px rgba(34, 197, 94, 0.5), 0 0 25px rgba(34, 197, 94, 0.9); background-color: #dcfce7 !important; }
 }
 .pisca-efeito {
-    animation: piscar-promocao 1.2s infinite alternate;
-    box-shadow: 0px 0px 8px rgba(34, 197, 94, 0.7);
+    animation: piscar-promocao 0.65s infinite alternate ease-in-out !important;
+    border: 2px solid #16a34a !important;
+    position: relative;
+    z-index: 10;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -108,7 +109,6 @@ def carregar_dados():
         df['Data partida_dt'] = pd.to_datetime(df['DATA PARTIDA'], dayfirst=True, errors='coerce')
         df['Mês/Ano'] = df['Data partida_dt'].dt.strftime('%m/%Y')
         
-        # DATETIMES PRECISOS PARA O MOTOR DE MULTITRECHOS
         df['Datetime Partida'] = pd.to_datetime(df['DATA PARTIDA'] + ' ' + df['HORA PARTIDA'], dayfirst=True, errors='coerce')
         df['Datetime Chegada'] = pd.to_datetime(df['DATA CHEGADA'] + ' ' + df['HORA CHEGADA'], dayfirst=True, errors='coerce')
         return df
@@ -230,19 +230,18 @@ def gerar_html_calendario(df_mes, ano, mes, coluna_valor, titulo, is_pontos, val
                 subvoo = str(voo.get('SUBVOO', 'Nao')).strip()
                 is_multi = subvoo.startswith('Multitrecho')
                 
-                # --- LÓGICA DO PISCAR (OS 3 MAIS BARATOS) E CORES ---
-                is_top3 = val <= threshold_top3
+                # --- LÓGICA DO PISCAR E CORES ---
+                # Removemos a borda vermelha e deixamos apenas o texto vermelho indicando o multitrecho
+                is_top3 = val <= threshold_top3 and threshold_top3 > 0
                 cor_texto = "red" if is_multi else "#1e293b"
                 classe_css = "pisca-efeito" if is_top3 else ""
-                borda_style = "border: 2px solid #22c55e;" if is_top3 else "border: 1px solid #e2e8f0;"
-                if is_multi: borda_style = "border: 2px solid red;"
+                borda_style = "border: 1px solid #e2e8f0;"
                 
                 dt_pesquisa = str(voo.get('DATA PESQUISA', '-'))
                 hr_pesquisa = str(voo.get('HORA PESQUISA', '-'))
                 
-                # TOOLTIP INTELIGENTE
                 if is_multi:
-                    tooltip = f"⚠️ {subvoo} | Saída: {voo['HORA PARTIDA']} ({orig}) | Chegada: {voo['HORA CHEGADA']} ({dest}) | Duração: {voo['DURACAO']} | Preço clube: {p_clube} | Preço normal: {p_normal} | Tx embarque: {tx} | Pesquisa: {dt_pesquisa} {hr_pesquisa}"
+                    tooltip = f"⚠️ {subvoo} | Saída: {voo['HORA PARTIDA']} ({orig}) | Chegada: {voo['HORA CHEGADA']} ({dest}) | Duração: {voo['DURACAO']} | Preço clube: {p_clube} | Preço normal: {p_normal} | Tx embarque dupla: {tx} | Pesquisa: {dt_pesquisa} {hr_pesquisa}"
                 else:
                     skip_str = "Não" if subvoo.lower() in ['nao', 'não', 'nan', ''] else subvoo
                     tooltip = f"Saída: {voo['HORA PARTIDA']} ({orig}) | Chegada: {voo['HORA CHEGADA']} ({dest}) | Duração: {voo['DURACAO']} | Preço clube: {p_clube} | Preço normal: {p_normal} | Tx embarque: {tx} | Skiplagging: {skip_str} | Pesquisa: {dt_pesquisa} {hr_pesquisa}"
