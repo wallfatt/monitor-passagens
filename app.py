@@ -28,7 +28,7 @@ MAPA_INVERSO = {aero: loc for loc, aeroportos in LOCALIDADES.items() for aero in
 # TAXAS FIXAS POR AEROPORTO ATUALIZADAS
 TAXAS_AEROPORTO = {
     "STM": 36.67, "NAT": 48.26, "BEL": 54.45, "VCP": 31.94, "GRU": 33.64, "BSB": 32.87,
-    "CGH": 33.64, "GIG": 33.64, "SDU": 33.64 
+    "CGH": 62.14, "GIG": 34.11, "SDU": 62.62 
 }
 TAXA_PADRAO = 50.00
 
