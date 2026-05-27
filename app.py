@@ -17,14 +17,14 @@ dt.set_page_config(page_title="Radar de Voos - Calendários Compactos", layout="
 ID_PLANILHA = "16zImsvHaEvcWJg4eCIrNy4o-NZJ0fZ7L"
 URL_DRIVE_CSV = f"https://docs.google.com/uc?export=download&id={ID_PLANILHA}"
 
-# Mapeamento de Localidades (Agrupamento de aeroportos)
+# Mapeamento de Localidades
 LOCALIDADES = {
     "SAO": ["GRU", "VCP", "CGH"],
     "RIO": ["GIG", "SDU", "RRJ"]
 }
 MAPA_INVERSO = {aero: loc for loc, aeroportos in LOCALIDADES.items() for aero in aeroportos}
 
-# TAXAS FIXAS POR AEROPORTO ATUALIZADAS CONFORME ÚLTIMOS DADOS
+# TAXAS FIXAS POR AEROPORTO ATUALIZADAS
 TAXAS_AEROPORTO = {
     "STM": 36.67, "NAT": 48.26, "BEL": 54.45, "VCP": 31.94, "GRU": 33.64, "BSB": 32.87,
     "CGH": 62.14, "GIG": 34.11, "SDU": 62.62, "RRJ": 37.83, "CNF": 33.56, "REC": 60.54
@@ -50,7 +50,7 @@ dt.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# FUNÇÕES DE PROCESSAMENTO
+# FUNÇÕES DE PROCESSAMENTO E SEGURANÇA
 # ==========================================
 def converter_duracao_para_minutos(dur_str):
     if pd.isna(dur_str) or not isinstance(dur_str, str): return 0
@@ -78,7 +78,7 @@ def carregar_dados():
         headers = {"User-Agent": "Mozilla/5.0"}
         response = requests.get(URL_DRIVE_CSV, headers=headers)
         if response.status_code != 200:
-            dt.error(f"Erro ao conectar ao Drive. Status HTTP: {response.status_code}")
+            dt.error(f"Erro de conexão. Status: {response.status_code}")
             return pd.DataFrame()
             
         conteudo_str = response.content.decode('utf-8', errors='ignore')
@@ -92,19 +92,25 @@ def carregar_dados():
         if df.empty: return pd.DataFrame()
         df.columns = df.columns.str.strip().str.upper()
         
-        colunas_essenciais = ['ORIGEM', 'DESTINO', 'DATA PARTIDA']
-        for col in colunas_essenciais:
-            if col not in df.columns: return pd.DataFrame()
+        # TRAVA DE SEGURANÇA: Garante que as colunas existam mesmo se a planilha vier incompleta
+        colunas_esperadas = ['PRECO NORMAL', 'PRECO CLUBE', 'NUMERO VOOS', 'SUBVOO', 'DURACAO', 'HORA PARTIDA', 'HORA CHEGADA', 'DATA CHEGADA', 'DATA PESQUISA', 'HORA PESQUISA']
+        for col in colunas_esperadas:
+            if col not in df.columns:
+                df[col] = ""
+                
+        if 'ORIGEM' not in df.columns or 'DESTINO' not in df.columns or 'DATA PARTIDA' not in df.columns:
+            return pd.DataFrame()
 
-        df = df.dropna(subset=colunas_essenciais)
+        df = df.dropna(subset=['ORIGEM', 'DESTINO', 'DATA PARTIDA'])
         df['ORIGEM'] = df['ORIGEM'].astype(str).str.strip().str.upper()
         df['DESTINO'] = df['DESTINO'].astype(str).str.strip().str.upper()
         df['ORIGEM_LOC'] = df['ORIGEM'].apply(lambda x: MAPA_INVERSO.get(x, x))
         df['DESTINO_LOC'] = df['DESTINO'].apply(lambda x: MAPA_INVERSO.get(x, x))
-        df['PRECO NORMAL'] = pd.to_numeric(df['PRECO NORMAL'], errors='coerce')
-        df['PRECO CLUBE'] = pd.to_numeric(df['PRECO CLUBE'], errors='coerce')
+        
+        df['PRECO NORMAL'] = pd.to_numeric(df['PRECO NORMAL'], errors='coerce').fillna(0)
+        df['PRECO CLUBE'] = pd.to_numeric(df['PRECO CLUBE'], errors='coerce').fillna(0)
         df['NUMERO VOOS'] = pd.to_numeric(df['NUMERO VOOS'], errors='coerce').fillna(1).astype(int)
-        df['SUBVOO'] = df.get('SUBVOO', pd.Series(['Nao']*len(df))).astype(str).str.strip()
+        df['SUBVOO'] = df['SUBVOO'].astype(str).str.strip()
         df['Duracao_Minutos'] = df['DURACAO'].apply(converter_duracao_para_minutos)
         df['Data partida_dt'] = pd.to_datetime(df['DATA PARTIDA'], dayfirst=True, errors='coerce')
         df['Mês/Ano'] = df['Data partida_dt'].dt.strftime('%m/%Y')
@@ -113,12 +119,14 @@ def carregar_dados():
         df['Datetime Chegada'] = pd.to_datetime(df['DATA CHEGADA'] + ' ' + df['HORA CHEGADA'], dayfirst=True, errors='coerce')
         return df
     except Exception as e: 
-        dt.error(f"Erro inesperado no processamento da planilha: {e}")
+        dt.error(f"Erro no processamento da planilha: {e}")
         return pd.DataFrame()
 
 def gerar_multitrechos(df, aeros_origem, aeros_dest, max_con_hours):
     df_leg1 = df[df['ORIGEM'].isin(aeros_origem)].copy()
     df_leg2 = df[df['DESTINO'].isin(aeros_dest)].copy()
+    if df_leg1.empty or df_leg2.empty: return pd.DataFrame()
+    
     merged = pd.merge(df_leg1, df_leg2, left_on='DESTINO', right_on='ORIGEM', suffixes=('_1', '_2'))
     if merged.empty: return pd.DataFrame()
     
@@ -156,9 +164,9 @@ def gerar_multitrechos(df, aeros_origem, aeros_dest, max_con_hours):
     
     data_atual = datetime.now().date()
     def calc_multi_tax(row):
-        t1 = TAXAS_AEROPORTO.get(row['ORIGEM_1'], TAXA_PADRAO)
-        t2 = TAXAS_AEROPORTO.get(row['ORIGEM_2'], TAXA_PADRAO)
-        d1, d2 = row['Datetime Partida_1'], row['Datetime Partida_2']
+        t1 = TAXAS_AEROPORTO.get(row.get('ORIGEM_1', ''), TAXA_PADRAO)
+        t2 = TAXAS_AEROPORTO.get(row.get('ORIGEM_2', ''), TAXA_PADRAO)
+        d1, d2 = row.get('Datetime Partida_1'), row.get('Datetime Partida_2')
         if pd.notna(d1) and (d1.date() - data_atual).days < 90: t1 += 49.90
         if pd.notna(d2) and (d2.date() - data_atual).days < 90: t2 += 49.90
         return t1 + t2
@@ -176,10 +184,10 @@ def processar_custos(df_voos_filtrado, valor_milheiro):
 
     data_atual = datetime.now().date()
     def calcular_taxa(row):
-        if 'MULTITRECHO_TAXA' in row and pd.notna(row['MULTITRECHO_TAXA']):
+        if 'MULTITRECHO_TAXA' in row.index and pd.notna(row['MULTITRECHO_TAXA']):
             return row['MULTITRECHO_TAXA']
-        base = TAXAS_AEROPORTO.get(row['ORIGEM'], TAXA_PADRAO)
-        d = row['Data partida_dt']
+        base = TAXAS_AEROPORTO.get(row.get('ORIGEM', ''), TAXA_PADRAO)
+        d = row.get('Data partida_dt')
         if pd.notna(d) and (d.date() - data_atual).days < 90: return base + 49.90
         return base
         
@@ -206,6 +214,10 @@ def gerar_html_calendario(df_mes, ano, mes, coluna_valor, titulo, is_pontos, val
     for d in ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom']: html += f"<td style='padding:4px; border-radius: 3px;'>{d}</td>"
     html += "</tr>"
     
+    # Previne que o Streamlit quebre caso a coluna de valor não exista
+    if coluna_valor not in df_mes.columns:
+        return html + "</table>"
+        
     df_dia = df_mes.groupby(df_mes['Data partida_dt'].dt.day)[coluna_valor].min().to_dict() if not df_mes.empty else {}
     df_voos_minimos = df_mes.sort_values(coluna_valor).groupby(df_mes['Data partida_dt'].dt.day).first() if not df_mes.empty else pd.DataFrame()
     val_range = val_max - val_min if val_max != val_min else 1
@@ -223,9 +235,9 @@ def gerar_html_calendario(df_mes, ano, mes, coluna_valor, titulo, is_pontos, val
                 
                 voo = df_voos_minimos.loc[day]
                 orig, dest = str(voo.get('ORIGEM', '')), str(voo.get('DESTINO', ''))
-                p_clube = f"{voo['PRECO CLUBE']:,.0f}".replace(",", ".") if pd.notna(voo['PRECO CLUBE']) else "-"
-                p_normal = f"{voo['PRECO NORMAL']:,.0f}".replace(",", ".") if pd.notna(voo['PRECO NORMAL']) else "-"
-                tx = f"R${voo['Taxa']:.2f}".replace(".", ",")
+                p_clube = f"{voo.get('PRECO CLUBE', 0):,.0f}".replace(",", ".") if pd.notna(voo.get('PRECO CLUBE')) else "-"
+                p_normal = f"{voo.get('PRECO NORMAL', 0):,.0f}".replace(",", ".") if pd.notna(voo.get('PRECO NORMAL')) else "-"
+                tx = f"R${voo.get('Taxa', 0):.2f}".replace(".", ",")
                 
                 subvoo = str(voo.get('SUBVOO', 'Nao')).strip()
                 is_multi = subvoo.startswith('Multitrecho')
@@ -240,10 +252,10 @@ def gerar_html_calendario(df_mes, ano, mes, coluna_valor, titulo, is_pontos, val
                 hr_pesquisa = str(voo.get('HORA PESQUISA', '-'))
                 
                 if is_multi:
-                    tooltip = f"⚠️ {subvoo} | Saída: {voo['HORA PARTIDA']} ({orig}) | Chegada: {voo['HORA CHEGADA']} ({dest}) | Duração: {voo['DURACAO']} | Preço clube: {p_clube} | Preço normal: {p_normal} | Tx embarque dupla: {tx} | Pesquisa: {dt_pesquisa} {hr_pesquisa}"
+                    tooltip = f"⚠️ {subvoo} | Saída: {voo.get('HORA PARTIDA', '-')} ({orig}) | Chegada: {voo.get('HORA CHEGADA', '-')} ({dest}) | Duração: {voo.get('DURACAO', '-')} | Preço clube: {p_clube} | Preço normal: {p_normal} | Tx embarque dupla: {tx} | Pesquisa: {dt_pesquisa} {hr_pesquisa}"
                 else:
                     skip_str = "Não" if subvoo.lower() in ['nao', 'não', 'nan', ''] else subvoo
-                    tooltip = f"Saída: {voo['HORA PARTIDA']} ({orig}) | Chegada: {voo['HORA CHEGADA']} ({dest}) | Duração: {voo['DURACAO']} | Preço clube: {p_clube} | Preço normal: {p_normal} | Tx embarque: {tx} | Skiplagging: {skip_str} | Pesquisa: {dt_pesquisa} {hr_pesquisa}"
+                    tooltip = f"Saída: {voo.get('HORA PARTIDA', '-')} ({orig}) | Chegada: {voo.get('HORA CHEGADA', '-')} ({dest}) | Duração: {voo.get('DURACAO', '-')} | Preço clube: {p_clube} | Preço normal: {p_normal} | Tx embarque: {tx} | Skiplagging: {skip_str} | Pesquisa: {dt_pesquisa} {hr_pesquisa}"
                 
                 html += f"<td title='{tooltip}' class='{classe_css}' style='background-color:rgb({r},{g},{b}); padding:8px 2px; border-radius:5px; {borda_style} cursor: help;'><div style='font-size:14px; font-weight:bold; color:#0f172a;'>{day}</div><div style='font-size:11px; font-weight:800; color:{cor_texto};'>{text_val}</div></td>"
             else: html += f"<td style='background-color:#f8fafc; padding:8px 2px; border-radius:5px; border: 1px dashed #cbd5e1;'><div style='font-size:14px; color:#94a3b8;'>{day}</div><div style='font-size:11px; color:#cbd5e1;'>-</div></td>"
@@ -273,7 +285,7 @@ else: dt.markdown(f"#[{TEXTO_EXIBIDO}]({LINK_INSTAGRAM})", unsafe_allow_html=Tru
 df_voos = carregar_dados()
 
 if df_voos.empty: 
-    dt.warning("⚠️ Planilha vazia ou com formato inválido. Verifique os erros acima.")
+    dt.warning("⚠️ O banco de dados está vazio ou não pôde ser carregado. Verifique o link do Drive.")
 else:
     dt.sidebar.header("🔍 Configurações")
     
@@ -281,34 +293,35 @@ else:
     origens_disp = sorted(list(df_voos['ORIGEM_LOC'].dropna().unique()))
     orig_ida = dt.sidebar.selectbox("📍 Origem (Digite ou selecione):", origens_disp)
     
-    # Filtra os destinos possíveis com base na origem selecionada
-    destinos_disp = sorted(list(df_voos[df_voos['ORIGEM_LOC'] == orig_ida]['DESTINO_LOC'].dropna().unique()))
-    dest_ida = dt.sidebar.selectbox("🎯 Destino:", destinos_disp, disabled=(len(destinos_disp) == 0))
+    if orig_ida:
+        destinos_disp = sorted(list(df_voos[df_voos['ORIGEM_LOC'] == orig_ida]['DESTINO_LOC'].dropna().unique()))
+        dest_ida = dt.sidebar.selectbox("🎯 Destino:", destinos_disp, disabled=(len(destinos_disp) == 0))
+    else: dest_ida = None
     
-    orig_volta, dest_volta = dest_ida, orig_ida
-    
-    dt.sidebar.markdown("---")
-    if orig_ida in LOCALIDADES: aeros_ida = dt.sidebar.multiselect(f"Aeros IDA em {orig_ida}:", LOCALIDADES[orig_ida], default=LOCALIDADES[orig_ida])
-    else: aeros_ida = [orig_ida]
-    
-    if orig_volta in LOCALIDADES: aeros_volta = dt.sidebar.multiselect(f"Aeros VOLTA em {orig_volta}:", LOCALIDADES[orig_volta], default=LOCALIDADES[orig_volta])
-    else: aeros_volta = [orig_volta]
-
-    dt.sidebar.markdown("---")
-    modo = dt.sidebar.radio("Mostrar valores em:", ["Pontos", "Reais (Clube)", "Reais (Normal)"])
-    milheiro = dt.sidebar.number_input("Valor do Milheiro (R$):", value=17.00, step=0.50, format="%.2f")
-    
-    usar_skiplagging = dt.sidebar.checkbox("Ativar Skiplagging (Buscar Subtrechos)", value=True)
-    usar_multitrecho = dt.sidebar.checkbox("Ativar Multitrecho (Busca Combinada)", value=True)
-    if usar_multitrecho: max_con_hours = dt.sidebar.number_input("Máximo conexão Multitrecho (hrs)", min_value=1, max_value=20, value=3)
-    else: max_con_hours = 0
-    
-    # ---------------- LÓGICA DE GERAÇÃO E FILTRO ----------------
-    df_base = df_voos.copy()
-    if not usar_skiplagging: df_base = df_base[~df_base['SUBVOO'].str.lower().str.startswith('sim')]
-    
-    # Somente renderiza se o destino foi selecionado e for válido
+    # Só renderiza a tela se um destino for validamente escolhido
     if dest_ida:
+        orig_volta, dest_volta = dest_ida, orig_ida
+        
+        dt.sidebar.markdown("---")
+        if orig_ida in LOCALIDADES: aeros_ida = dt.sidebar.multiselect(f"Aeros IDA em {orig_ida}:", LOCALIDADES[orig_ida], default=LOCALIDADES[orig_ida])
+        else: aeros_ida = [orig_ida]
+        
+        if orig_volta in LOCALIDADES: aeros_volta = dt.sidebar.multiselect(f"Aeros VOLTA em {orig_volta}:", LOCALIDADES[orig_volta], default=LOCALIDADES[orig_volta])
+        else: aeros_volta = [orig_volta]
+
+        dt.sidebar.markdown("---")
+        modo = dt.sidebar.radio("Mostrar valores em:", ["Pontos", "Reais (Clube)", "Reais (Normal)"])
+        milheiro = dt.sidebar.number_input("Valor do Milheiro (R$):", value=17.00, step=0.50, format="%.2f")
+        
+        usar_skiplagging = dt.sidebar.checkbox("Ativar Skiplagging (Buscar Subtrechos)", value=True)
+        usar_multitrecho = dt.sidebar.checkbox("Ativar Multitrecho (Busca Combinada)", value=True)
+        if usar_multitrecho: max_con_hours = dt.sidebar.number_input("Máximo conexão Multitrecho (hrs)", min_value=1, max_value=20, value=3)
+        else: max_con_hours = 0
+        
+        # ---------------- LÓGICA DE GERAÇÃO E FILTRO ----------------
+        df_base = df_voos.copy()
+        if not usar_skiplagging: df_base = df_base[~df_base['SUBVOO'].str.lower().str.startswith('sim')]
+        
         df_i_normal = df_base[(df_base['ORIGEM_LOC'] == orig_ida) & (df_base['DESTINO_LOC'] == dest_ida)]
         if orig_ida in LOCALIDADES: df_i_normal = df_i_normal[df_i_normal['ORIGEM'].isin(aeros_ida)]
         
@@ -368,6 +381,7 @@ else:
         glob = pd.concat([val_ida, val_volta]).dropna()
         g_min, g_max = (glob.min(), glob.max()) if not glob.empty else (0, 1)
 
+        # Identificação do threshold para as 3 datas mais baratas de forma super segura
         if not df_i_proc.empty and col_val in df_i_proc.columns:
             menores_i = df_i_proc.groupby(df_i_proc['Data partida_dt'].dt.date)[col_val].min().nsmallest(3)
             threshold_i = menores_i.max() if not menores_i.empty else -1
