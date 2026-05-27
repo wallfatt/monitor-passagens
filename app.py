@@ -24,7 +24,7 @@ LOCALIDADES = {
 }
 MAPA_INVERSO = {aero: loc for loc, aeroportos in LOCALIDADES.items() for aero in aeroportos}
 
-# TAXAS FIXAS POR AEROPORTO ATUALIZADAS
+# TAXAS FIXAS POR AEROPORTO ATUALIZADAS CONFORME ÚLTIMOS DADOS
 TAXAS_AEROPORTO = {
     "STM": 36.67, "NAT": 48.26, "BEL": 54.45, "VCP": 31.94, "GRU": 33.64, "BSB": 32.87,
     "CGH": 62.14, "GIG": 34.11, "SDU": 62.62, "RRJ": 37.83, "CNF": 33.56, "REC": 60.54
@@ -231,7 +231,6 @@ def gerar_html_calendario(df_mes, ano, mes, coluna_valor, titulo, is_pontos, val
                 is_multi = subvoo.startswith('Multitrecho')
                 
                 # --- LÓGICA DO PISCAR E CORES ---
-                # Removemos a borda vermelha e deixamos apenas o texto vermelho indicando o multitrecho
                 is_top3 = val <= threshold_top3 and threshold_top3 > 0
                 cor_texto = "red" if is_multi else "#1e293b"
                 classe_css = "pisca-efeito" if is_top3 else ""
@@ -278,9 +277,14 @@ if df_voos.empty:
 else:
     dt.sidebar.header("🔍 Configurações")
     
-    df_voos['Rota_Ida'] = df_voos['ORIGEM_LOC'] + " -> " + df_voos['DESTINO_LOC']
-    rota_sel = dt.sidebar.selectbox("Selecione a Rota:", sorted(list(df_voos['Rota_Ida'].dropna().unique())))
-    orig_ida, dest_ida = rota_sel.split(" -> ")
+    # ---------------- NOVO FLUXO DE ORIGEM E DESTINO DINÂMICOS ----------------
+    origens_disp = sorted(list(df_voos['ORIGEM_LOC'].dropna().unique()))
+    orig_ida = dt.sidebar.selectbox("📍 Origem (Digite ou selecione):", origens_disp)
+    
+    # Filtra os destinos possíveis com base na origem selecionada
+    destinos_disp = sorted(list(df_voos[df_voos['ORIGEM_LOC'] == orig_ida]['DESTINO_LOC'].dropna().unique()))
+    dest_ida = dt.sidebar.selectbox("🎯 Destino:", destinos_disp, disabled=(len(destinos_disp) == 0))
+    
     orig_volta, dest_volta = dest_ida, orig_ida
     
     dt.sidebar.markdown("---")
@@ -303,83 +307,84 @@ else:
     df_base = df_voos.copy()
     if not usar_skiplagging: df_base = df_base[~df_base['SUBVOO'].str.lower().str.startswith('sim')]
     
-    df_i_normal = df_base[(df_base['ORIGEM_LOC'] == orig_ida) & (df_base['DESTINO_LOC'] == dest_ida)]
-    if orig_ida in LOCALIDADES: df_i_normal = df_i_normal[df_i_normal['ORIGEM'].isin(aeros_ida)]
-    
-    if usar_multitrecho:
-        df_i_multi = gerar_multitrechos(df_base, aeros_ida, LOCALIDADES.get(dest_ida, [dest_ida]), max_con_hours)
-        df_i_total = pd.concat([df_i_normal, df_i_multi], ignore_index=True) if not df_i_multi.empty else df_i_normal
-    else: df_i_total = df_i_normal
-
-    df_v_normal = df_base[(df_base['ORIGEM_LOC'] == orig_volta) & (df_base['DESTINO_LOC'] == dest_volta)]
-    if orig_volta in LOCALIDADES: df_v_normal = df_v_normal[df_v_normal['ORIGEM'].isin(aeros_volta)]
-    
-    if usar_multitrecho:
-        df_v_multi = gerar_multitrechos(df_base, aeros_volta, LOCALIDADES.get(dest_volta, [dest_volta]), max_con_hours)
-        df_v_total = pd.concat([df_v_normal, df_v_multi], ignore_index=True) if not df_v_multi.empty else df_v_normal
-    else: df_v_total = df_v_normal
-    
-    df_i_proc = processar_custos(df_i_total, milheiro)
-    df_v_proc = processar_custos(df_v_total, milheiro)
-
-    # ---------------- SLIDERS DE TEMPO ----------------
-    dt.sidebar.markdown("---")
-    dt.sidebar.subheader("✈️ Filtros de Tempo/Conexões")
-    
-    if not df_i_proc.empty:
-        v_min_i, v_max_i = int(df_i_proc['NUMERO VOOS'].min()), int(df_i_proc['NUMERO VOOS'].max())
-        t_min_i = float(math.floor(df_i_proc['Duracao_Minutos'].min() / 60))
-        t_max_i = float(math.ceil(df_i_proc['Duracao_Minutos'].max() / 60))
-        if t_min_i == t_max_i: t_max_i += 1.0
-    else: v_min_i, v_max_i, t_min_i, t_max_i = 1, 1, 0.0, 1.0
-
-    slide_v_i = dt.sidebar.slider("Ida: Conexões", v_min_i, v_max_i, (v_min_i, v_max_i)) if v_min_i < v_max_i else (v_min_i, v_max_i)
-    slide_t_i = dt.sidebar.slider("Ida: Tempo (h)", t_min_i, t_max_i, (t_min_i, t_max_i), step=0.5) if t_min_i < t_max_i else (t_min_i, t_max_i)
-    
-    if not df_v_proc.empty:
-        v_min_v, v_max_v = int(df_v_proc['NUMERO VOOS'].min()), int(df_v_proc['NUMERO VOOS'].max())
-        t_min_v = float(math.floor(df_v_proc['Duracao_Minutos'].min() / 60))
-        t_max_v = float(math.ceil(df_v_proc['Duracao_Minutos'].max() / 60))
-        if t_min_v == t_max_v: t_max_v += 1.0
-    else: v_min_v, v_max_v, t_min_v, t_max_v = 1, 1, 0.0, 1.0
-
-    slide_v_v = dt.sidebar.slider("Volta: Conexões", v_min_v, v_max_v, (v_min_v, v_max_v)) if v_min_v < v_max_v else (v_min_v, v_max_v)
-    slide_t_v = dt.sidebar.slider("Volta: Tempo (h)", t_min_v, t_max_v, (t_min_v, t_max_v), step=0.5) if t_min_v < t_max_v else (t_min_v, t_max_v)
-
-    if not df_i_proc.empty: df_i_proc = df_i_proc[(df_i_proc['NUMERO VOOS'].between(slide_v_i[0], slide_v_i[1])) & (df_i_proc['Duracao_Minutos'].between(slide_t_i[0]*60, slide_t_i[1]*60))]
-    if not df_v_proc.empty: df_v_proc = df_v_proc[(df_v_proc['NUMERO VOOS'].between(slide_v_v[0], slide_v_v[1])) & (df_v_proc['Duracao_Minutos'].between(slide_t_v[0]*60, slide_t_v[1]*60))]
-
-    # ---------------- RENDERIZAÇÃO FINAL ----------------
-    col_val = 'PRECO CLUBE' if modo == "Pontos" else ('Custo Real Clube' if modo == "Reais (Clube)" else 'Custo Real Normal')
-    is_pts = (modo == "Pontos")
-    
-    mes_i = df_i_proc['Mês/Ano'] if not df_i_proc.empty and 'Mês/Ano' in df_i_proc.columns else pd.Series(dtype=str)
-    mes_v = df_v_proc['Mês/Ano'] if not df_v_proc.empty and 'Mês/Ano' in df_v_proc.columns else pd.Series(dtype=str)
-    meses = sorted(pd.concat([mes_i, mes_v]).dropna().unique(), key=lambda x: datetime.strptime(x, "%m/%Y"))
-    
-    val_ida = df_i_proc[col_val] if not df_i_proc.empty and col_val in df_i_proc.columns else pd.Series(dtype=float)
-    val_volta = df_v_proc[col_val] if not df_v_proc.empty and col_val in df_v_proc.columns else pd.Series(dtype=float)
-    glob = pd.concat([val_ida, val_volta]).dropna()
-    g_min, g_max = (glob.min(), glob.max()) if not glob.empty else (0, 1)
-
-    # Identificação do threshold para as 3 datas mais baratas
-    if not df_i_proc.empty and col_val in df_i_proc.columns:
-        menores_i = df_i_proc.groupby(df_i_proc['Data partida_dt'].dt.date)[col_val].min().nsmallest(3)
-        threshold_i = menores_i.max() if not menores_i.empty else -1
-    else: threshold_i = -1
+    # Somente renderiza se o destino foi selecionado e for válido
+    if dest_ida:
+        df_i_normal = df_base[(df_base['ORIGEM_LOC'] == orig_ida) & (df_base['DESTINO_LOC'] == dest_ida)]
+        if orig_ida in LOCALIDADES: df_i_normal = df_i_normal[df_i_normal['ORIGEM'].isin(aeros_ida)]
         
-    if not df_v_proc.empty and col_val in df_v_proc.columns:
-        menores_v = df_v_proc.groupby(df_v_proc['Data partida_dt'].dt.date)[col_val].min().nsmallest(3)
-        threshold_v = menores_v.max() if not menores_v.empty else -1
-    else: threshold_v = -1
+        if usar_multitrecho:
+            df_i_multi = gerar_multitrechos(df_base, aeros_ida, LOCALIDADES.get(dest_ida, [dest_ida]), max_con_hours)
+            df_i_total = pd.concat([df_i_normal, df_i_multi], ignore_index=True) if not df_i_multi.empty else df_i_normal
+        else: df_i_total = df_i_normal
 
-    for m in meses:
-        m_int, a_int = map(int, m.split("/"))
-        c1, c2 = dt.columns(2)
-        with c1: 
-            if not df_i_proc.empty and not df_i_proc[df_i_proc['Mês/Ano']==m].empty:
-                dt.markdown(gerar_html_calendario(df_i_proc[df_i_proc['Mês/Ano']==m], a_int, m_int, col_val, f"IDA: {orig_ida}➔{dest_ida}", is_pts, g_min, g_max, threshold_i), unsafe_allow_html=True)
-        with c2: 
-            if not df_v_proc.empty and not df_v_proc[df_v_proc['Mês/Ano']==m].empty:
-                dt.markdown(gerar_html_calendario(df_v_proc[df_v_proc['Mês/Ano']==m], a_int, m_int, col_val, f"VOLTA: {orig_volta}➔{dest_volta}", is_pts, g_min, g_max, threshold_v), unsafe_allow_html=True)
-        dt.markdown("<hr style='margin:10px 0; border:0.5px solid #eee;'>", unsafe_allow_html=True)
+        df_v_normal = df_base[(df_base['ORIGEM_LOC'] == orig_volta) & (df_base['DESTINO_LOC'] == dest_volta)]
+        if orig_volta in LOCALIDADES: df_v_normal = df_v_normal[df_v_normal['ORIGEM'].isin(aeros_volta)]
+        
+        if usar_multitrecho:
+            df_v_multi = gerar_multitrechos(df_base, aeros_volta, LOCALIDADES.get(dest_volta, [dest_volta]), max_con_hours)
+            df_v_total = pd.concat([df_v_normal, df_v_multi], ignore_index=True) if not df_v_multi.empty else df_v_normal
+        else: df_v_total = df_v_normal
+        
+        df_i_proc = processar_custos(df_i_total, milheiro)
+        df_v_proc = processar_custos(df_v_total, milheiro)
+
+        # ---------------- SLIDERS DE TEMPO ----------------
+        dt.sidebar.markdown("---")
+        dt.sidebar.subheader("✈️ Filtros de Tempo/Conexões")
+        
+        if not df_i_proc.empty:
+            v_min_i, v_max_i = int(df_i_proc['NUMERO VOOS'].min()), int(df_i_proc['NUMERO VOOS'].max())
+            t_min_i = float(math.floor(df_i_proc['Duracao_Minutos'].min() / 60))
+            t_max_i = float(math.ceil(df_i_proc['Duracao_Minutos'].max() / 60))
+            if t_min_i == t_max_i: t_max_i += 1.0
+        else: v_min_i, v_max_i, t_min_i, t_max_i = 1, 1, 0.0, 1.0
+
+        slide_v_i = dt.sidebar.slider("Ida: Conexões", v_min_i, v_max_i, (v_min_i, v_max_i)) if v_min_i < v_max_i else (v_min_i, v_max_i)
+        slide_t_i = dt.sidebar.slider("Ida: Tempo (h)", t_min_i, t_max_i, (t_min_i, t_max_i), step=0.5) if t_min_i < t_max_i else (t_min_i, t_max_i)
+        
+        if not df_v_proc.empty:
+            v_min_v, v_max_v = int(df_v_proc['NUMERO VOOS'].min()), int(df_v_proc['NUMERO VOOS'].max())
+            t_min_v = float(math.floor(df_v_proc['Duracao_Minutos'].min() / 60))
+            t_max_v = float(math.ceil(df_v_proc['Duracao_Minutos'].max() / 60))
+            if t_min_v == t_max_v: t_max_v += 1.0
+        else: v_min_v, v_max_v, t_min_v, t_max_v = 1, 1, 0.0, 1.0
+
+        slide_v_v = dt.sidebar.slider("Volta: Conexões", v_min_v, v_max_v, (v_min_v, v_max_v)) if v_min_v < v_max_v else (v_min_v, v_max_v)
+        slide_t_v = dt.sidebar.slider("Volta: Tempo (h)", t_min_v, t_max_v, (t_min_v, t_max_v), step=0.5) if t_min_v < t_max_v else (t_min_v, t_max_v)
+
+        if not df_i_proc.empty: df_i_proc = df_i_proc[(df_i_proc['NUMERO VOOS'].between(slide_v_i[0], slide_v_i[1])) & (df_i_proc['Duracao_Minutos'].between(slide_t_i[0]*60, slide_t_i[1]*60))]
+        if not df_v_proc.empty: df_v_proc = df_v_proc[(df_v_proc['NUMERO VOOS'].between(slide_v_v[0], slide_v_v[1])) & (df_v_proc['Duracao_Minutos'].between(slide_t_v[0]*60, slide_t_v[1]*60))]
+
+        # ---------------- RENDERIZAÇÃO FINAL ----------------
+        col_val = 'PRECO CLUBE' if modo == "Pontos" else ('Custo Real Clube' if modo == "Reais (Clube)" else 'Custo Real Normal')
+        is_pts = (modo == "Pontos")
+        
+        mes_i = df_i_proc['Mês/Ano'] if not df_i_proc.empty and 'Mês/Ano' in df_i_proc.columns else pd.Series(dtype=str)
+        mes_v = df_v_proc['Mês/Ano'] if not df_v_proc.empty and 'Mês/Ano' in df_v_proc.columns else pd.Series(dtype=str)
+        meses = sorted(pd.concat([mes_i, mes_v]).dropna().unique(), key=lambda x: datetime.strptime(x, "%m/%Y"))
+        
+        val_ida = df_i_proc[col_val] if not df_i_proc.empty and col_val in df_i_proc.columns else pd.Series(dtype=float)
+        val_volta = df_v_proc[col_val] if not df_v_proc.empty and col_val in df_v_proc.columns else pd.Series(dtype=float)
+        glob = pd.concat([val_ida, val_volta]).dropna()
+        g_min, g_max = (glob.min(), glob.max()) if not glob.empty else (0, 1)
+
+        if not df_i_proc.empty and col_val in df_i_proc.columns:
+            menores_i = df_i_proc.groupby(df_i_proc['Data partida_dt'].dt.date)[col_val].min().nsmallest(3)
+            threshold_i = menores_i.max() if not menores_i.empty else -1
+        else: threshold_i = -1
+            
+        if not df_v_proc.empty and col_val in df_v_proc.columns:
+            menores_v = df_v_proc.groupby(df_v_proc['Data partida_dt'].dt.date)[col_val].min().nsmallest(3)
+            threshold_v = menores_v.max() if not menores_v.empty else -1
+        else: threshold_v = -1
+
+        for m in meses:
+            m_int, a_int = map(int, m.split("/"))
+            c1, c2 = dt.columns(2)
+            with c1: 
+                if not df_i_proc.empty and not df_i_proc[df_i_proc['Mês/Ano']==m].empty:
+                    dt.markdown(gerar_html_calendario(df_i_proc[df_i_proc['Mês/Ano']==m], a_int, m_int, col_val, f"IDA: {orig_ida}➔{dest_ida}", is_pts, g_min, g_max, threshold_i), unsafe_allow_html=True)
+            with c2: 
+                if not df_v_proc.empty and not df_v_proc[df_v_proc['Mês/Ano']==m].empty:
+                    dt.markdown(gerar_html_calendario(df_v_proc[df_v_proc['Mês/Ano']==m], a_int, m_int, col_val, f"VOLTA: {orig_volta}➔{dest_volta}", is_pts, g_min, g_max, threshold_v), unsafe_allow_html=True)
+            dt.markdown("<hr style='margin:10px 0; border:0.5px solid #eee;'>", unsafe_allow_html=True)
